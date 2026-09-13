@@ -20,7 +20,7 @@ try {
   const page = await browser.newPage();
   await page.setViewport({ width: 1400, height: 1000 });
   page.on("pageerror", (err) => console.log(`[pageerror] ${err.message}`));
-  await page.goto(`http://localhost:${port}/05-ui/index.html`);
+  await page.goto(`http://localhost:${port}/05-ui/index.html?world=tunic&autostart=1`);
 
   const started = Date.now();
   await page.waitForFunction(() => window.spikeState.ready || window.spikeState.fatal, { timeout: 300_000 });

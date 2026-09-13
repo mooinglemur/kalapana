@@ -25,10 +25,19 @@
 </head>
 <body>
   <header>
+    <label>Game
+      <select id="world">
+        <option value="tunic">TUNIC</option>
+        <option value="stardew_valley">Stardew Valley</option>
+      </select>
+    </label>
+    <label>Player YAML <input id="yamls" type="file" accept=".yaml,.yml" multiple></label>
+    <label>Poptracker pack <input id="pack" type="file" accept=".zip"></label>
+    <button id="start">Start</button>
     <label>Server <input id="address" value="ws://127.0.0.1:38281"></label>
     <label>Slot <input id="slot" value="Tuner" size="10"></label>
     <button id="connect" disabled>Connect</button>
-    <span id="status">Booting Python…</span>
+    <span id="status">Choose a game, add files, then Start.</span>
   </header>
   <nav>
     <button data-tab="tracker" aria-selected="true">Tracker</button>
@@ -53,7 +62,7 @@
     const $ = (id) => document.getElementById(id);
     const state = window.spikeState = {
       ready: false, timings: null, trackerLines: [], labels: {}, markers: 0, markerUpdates: 0,
-      mapImageLoaded: false, maps: [], logs: [], fatal: null,
+      mapImageLoaded: false, maps: [], logs: [], updates: [], fatal: null,
     };
     const images = new Map();
     const markerNodes = new Map();
@@ -61,6 +70,22 @@
 
     const worker = new Worker("./worker.js", { type: "module" });
     const send = (message) => worker.postMessage(JSON.stringify(message));
+
+    const params = new URLSearchParams(location.search);
+    for (const field of ["world", "address", "slot"]) {
+      if (params.has(field)) $(field).value = params.get(field);
+    }
+
+    // Files are collected before Python starts: UT asks for them synchronously while handling packets.
+    async function start() {
+      const fileEntry = async (file) => ({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+      const yamls = await Promise.all([...$("yamls").files].map(fileEntry));
+      const pack = $("pack").files[0] ? await fileEntry($("pack").files[0]) : null;
+      for (const id of ["world", "yamls", "pack", "start"]) $(id).disabled = true;
+      $("status").textContent = "Booting Python…";
+      const transfer = [...yamls, ...(pack ? [pack] : [])].map((entry) => entry.bytes.buffer);
+      worker.postMessage({ type: "boot", world: $("world").value, yamls, pack }, transfer);
+    }
 
     // UT emits Kivy markup: [color=hex]text[/color].
     function renderMarkup(target, text) {
@@ -159,7 +184,8 @@
         case "ready":
           state.ready = true;
           state.timings = message.timings;
-          $("status").textContent = `Ready (${Object.entries(message.timings).map(([k, v]) => `${k} ${v}s`).join(", ")})`;
+          $("status").textContent = `Ready (${Object.entries(message.timings).map(([k, v]) => `${k} ${v}s`).join(", ")}; ` +
+            `YAMLs: ${message.yamls.join(", ") || "none"}; pack: ${message.pack ? "yes" : "no"})`;
           $("connect").disabled = false;
           break;
         case "fatal":
@@ -208,6 +234,9 @@
         case "map_image":
           showImage(message.source);
           break;
+        case "timing":
+          state.updates.push({ at: Date.now(), ...message });
+          break;
         case "address":
         case "map_icons":
           break;
@@ -218,6 +247,8 @@
       document.querySelectorAll("nav button").forEach((b) => b.setAttribute("aria-selected", b === button));
       for (const tab of ["tracker", "map", "log"]) $(`tab-${tab}`).hidden = tab !== button.dataset.tab;
     }));
+    $("start").addEventListener("click", start);
+    if (params.has("autostart")) start();
     $("connect").addEventListener("click", () => send({ type: "connect", address: $("address").value, slot: $("slot").value }));
     $("map-select").addEventListener("change", (event) => send({ type: "load_map", map: event.target.value }));
     $("command").addEventListener("keydown", (event) => {

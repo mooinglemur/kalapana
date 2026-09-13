@@ -8,6 +8,7 @@ import copy
 import json
 import logging
 import pkgutil
+import time
 import zipfile
 from collections import Counter
 
@@ -292,9 +293,13 @@ class BrowserTrackerContext(TrackerGameContext):
         post({"type": "log", "level": "ERROR", "text": f"{title}: {text}"})
 
     def updateTracker(self):
+        started = time.perf_counter()
         result = super().updateTracker()
+        logic_seconds = time.perf_counter() - started
         self.tracker_page.flush()
         self.flush_markers()
+        post({"type": "timing", "logic": round(logic_seconds, 4), "total": round(time.perf_counter() - started, 4),
+              "items": len(self.items_received), "checked": len(self.checked_locations)})
         return result
 
     def load_coords(self, coords: dict, deferred_coords: dict, event_coords: dict, use_split: bool,
@@ -331,7 +336,13 @@ class BrowserTrackerContext(TrackerGameContext):
 
 
 class PostLogHandler(logging.Handler):
+    # CommonClient copies server text to these loggers for its log file and console; the page
+    # already gets that text through BridgeUI.print_json.
+    SKIPPED_LOGGERS = {"FileLog", "StreamLog"}
+
     def emit(self, record: logging.LogRecord) -> None:
+        if record.name in self.SKIPPED_LOGGERS:
+            return
         post({"type": "log", "level": record.levelname, "text": self.format(record)})
 
 

@@ -72,8 +72,16 @@ class BrowserWebSocket:
 
 async def connect(uri: str, **_kwargs) -> BrowserWebSocket:
     # TLS, ping and max_size are handled by the browser, so CommonClient's extra arguments are ignored.
-    socket = BrowserWebSocket(uri)
-    await socket._opened
+    # CommonClient retries with wss:// after a websockets.InvalidMessage, but the browser only reports
+    # a generic failure, so retry here instead.
+    try:
+        socket = BrowserWebSocket(uri)
+        await socket._opened
+    except ConnectionRefusedError:
+        if not uri.startswith("ws://"):
+            raise
+        socket = BrowserWebSocket("wss://" + uri[len("ws://"):])
+        await socket._opened
     return socket
 
 
