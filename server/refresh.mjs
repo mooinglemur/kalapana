@@ -306,7 +306,7 @@ async function ensureDownloaded(item, unlocked) {
 
 // Runtime modules only the browser imports. Editing them rebuilds the core bundle but doesn't
 // invalidate apworld analyses.
-const BROWSER_ONLY_RUNTIME = new Set(["ui_bridge.py", "browser_websocket.py"]);
+const BROWSER_ONLY_RUNTIME = new Set(["ui_bridge.py", "browser_websocket.py", "datapackage_cache.py"]);
 
 async function hashSources(hash, dir, include = () => true) {
   for (const name of (await readdir(dir)).sort()) {

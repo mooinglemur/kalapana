@@ -90,7 +90,12 @@ flowchart LR
 
   The gear menu has one saved option, streamer mode. It hides the room's port in the address field (except while the field is being edited), the status line and the Recent menu. The log is masked on a best-effort basis: anything shaped like `host:port`.
 
-  The log keeps its most recent 2000 lines, on the page and in memory. When older lines are dropped, a reader scrolled back through the log keeps their place. `spikes/07-kalapana/switch.mjs` checks this.
+  The log keeps its most recent 2000 lines, on the page and in memory. When older lines are dropped, a reader scrolled back through the log keeps their place.
+
+  **Datapackage cache.** CommonClient caches downloaded datapackages in a cache directory, which in the worker is memory that ends with the session. Instead, the page owns a cache in IndexedDB (`web/datapackage-cache.mjs`), keyed by game and checksum, with the least recently used evicted past 100 MB.
+  - **Starting a session:** while the worker boots, the page loads the room's other games from the cache, and downloads the rest from the room with `GetDataPackage`, which needs no login. It hands them to `runtime/datapackage_cache.py`, which answers AP's load function, and saves the downloads.
+  - **Integrity:** world code in the worker, including uploaded apworlds, can write to the origin's IndexedDB. A client can't recompute a datapackage checksum, because servers don't send the item and location name groups it covers. So each entry is signed with an HMAC whose key is kept in localStorage, which workers can't reach. An entry that fails the check is ignored and downloaded again.
+  - **Checked by** `spikes/07-kalapana/datapackage-cache.mjs`: the first download, the reuse after a reload, and a tampered entry. `spikes/07-kalapana/switch.mjs` checks this.
 - **Worker** (`web/worker.mjs`):
   1. Load Pyodide from kalapana and the packages the entries list.
   2. Unpack the core, tracker and world bundles at `/`, and place the uploaded files.

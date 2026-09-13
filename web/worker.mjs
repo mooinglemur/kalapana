@@ -64,7 +64,8 @@ async function inspect({ runtime, apworld }) {
   post({ type: "inspected", ...JSON.parse(result) });
 }
 
-async function start({ yamls, pack, connect }) {
+async function start({ yamls, pack, connect, datapackages }) {
+  py.pyimport("datapackage_cache").install(py.toPy(datapackages ?? []));
   await time("tracker", async () => {
     py.FS.mkdirTree("/ap/Players");
     for (const yaml of yamls) py.FS.writeFile(`/ap/Players/${yaml.name}`, yaml.bytes);

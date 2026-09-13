@@ -1,5 +1,7 @@
 // Page logic: find the room's game and matching world bundle, collect any files the world needs,
 // run the tracker in a worker, and render what it reports.
+import { loadDatapackages, saveDatapackage } from "./datapackage-cache.mjs";
+
 const SVG = "http://www.w3.org/2000/svg";
 const $ = (id) => document.getElementById(id);
 
@@ -267,6 +269,70 @@ async function probe(address, slot, password) {
   throw lastError;
 }
 
+// --- datapackages -------------------------------------------------------------------------------
+// The page, not the worker, owns the datapackage cache (see datapackage-cache.mjs).
+
+// Fetches datapackages straight from the room, which answers GetDataPackage without a login.
+function downloadDatapackages(url, games) {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url);
+    const received = {};
+    let replies = 0;
+    const finish = (settle, value) => {
+      clearTimeout(timer);
+      socket.onopen = socket.onclose = socket.onerror = socket.onmessage = null;
+      socket.close();
+      settle(value);
+    };
+    const timer = setTimeout(() => finish(reject, new Error(`Timed out downloading datapackages from ${url}`)), 60_000);
+    socket.onerror = () => finish(reject, new Error(`Couldn't connect to ${url}`));
+    socket.onclose = () => finish(reject, new Error(`${url} closed the connection`));
+    socket.onmessage = (event) => {
+      for (const packet of JSON.parse(event.data)) {
+        if (packet.cmd === "RoomInfo") {
+          // One game per request keeps each reply small.
+          socket.send(JSON.stringify(games.map((game) => ({ cmd: "GetDataPackage", games: [game] }))));
+        } else if (packet.cmd === "DataPackage") {
+          Object.assign(received, packet.data?.games);
+          if (++replies === games.length) return finish(resolve, received);
+        }
+      }
+    };
+  });
+}
+
+// Returns [game, checksum, JSON text, fromCache] for the room's other games. Anything that can't be
+// supplied is left for the tracker to download as usual.
+async function gatherDatapackages({ url, checksums, game }) {
+  const wanted = Object.fromEntries(
+    Object.entries(checksums).filter(([name, checksum]) => checksum && name !== game && name !== "Archipelago"),
+  );
+  const entries = [];
+  const { found, rejected } = await loadDatapackages(wanted);
+  for (const name of rejected) {
+    addLog("WARNING", { text: `Ignored this browser's cached ${name} datapackage because it failed its integrity check.` });
+  }
+  for (const [name, text] of Object.entries(found)) entries.push([name, wanted[name], text, true]);
+  const missing = Object.keys(wanted).filter((name) => !(name in found));
+  if (!missing.length) return entries;
+  try {
+    const downloaded = await downloadDatapackages(url, missing);
+    const names = [];
+    for (const name of missing) {
+      const data = downloaded[name];
+      if (data?.checksum !== wanted[name]) continue;
+      const text = JSON.stringify(data);
+      entries.push([name, wanted[name], text, false]);
+      names.push(name);
+      saveDatapackage(name, wanted[name], text);
+    }
+    if (names.length) addLog("INFO", { text: `Downloaded the datapackages for ${names.join(", ")}.` });
+  } catch {
+    // The tracker downloads whatever is still missing.
+  }
+  return entries;
+}
+
 function isTracking() {
   return ui.phase === "booting" || ui.phase === "tracking";
 }
@@ -385,7 +451,10 @@ async function onConnect() {
     const { url, roomInfo, game } = await probe(address, slot, password || null);
     if (attempt !== checkAttempt) return;
     const checksum = roomInfo.datapackage_checksums?.[game];
-    pending = { url, address, slot, password: password || null, game, checksum, entry: null, description: game };
+    pending = {
+      url, address, slot, password: password || null, game, checksum, entry: null, description: game,
+      checksums: roomInfo.datapackage_checksums ?? {},
+    };
 
     const candidates = catalog.games[game] ?? [];
     const matches = candidates.filter((candidate) => candidate.checksum === checksum);
@@ -440,12 +509,19 @@ async function startTracking() {
 
   // An uploaded apworld's worker is already running from the inspection.
   if (!worker) spawnWorker(pending.url).postMessage({ type: "boot", runtime: runtimeInfo(), entry });
+  const session = worker;
+  const { url, slot, password, checksums, game } = pending;
+  document.title = `UT: ${slot}`;
+  // Gathered while the worker boots.
+  const datapackages = await gatherDatapackages({ url, checksums, game });
+  if (worker !== session) return;
   const transfer = [...yamls, ...(pack ? [pack] : [])].map((file) => file.bytes.buffer);
   worker.postMessage({
     type: "start",
     yamls,
     pack,
-    connect: { address: pending.url, slot: pending.slot, password: pending.password },
+    datapackages,
+    connect: { address: url, slot, password },
   }, transfer);
   sendVisibility();
 }
@@ -455,6 +531,7 @@ async function startTracking() {
 function stopTracking({ state = "idle", text = "Disconnected.", error = false } = {}) {
   discardWorker();
   pending = null;
+  document.title = "Universal Tracker";
   resetView();
   for (const id of LOCKED_WHILE_TRACKING) $(id).disabled = false;
   $("connect").textContent = "Connect";
