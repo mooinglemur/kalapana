@@ -1,9 +1,10 @@
 """Stand-in for `websockets.connect` backed by the JavaScript WebSocket API.
 
-Covers only what CommonClient uses: awaiting connect, `open`/`closed`, `send`, `close`,
-and async iteration over text frames.
+Covers what CommonClient uses (awaiting connect, `open`/`closed`, `send`, `close`, async iteration over
+text frames), plus `last_heard` and `abandon` for the bridge's dead-link watchdog.
 """
 import asyncio
+import time
 
 import js
 from pyodide.ffi import create_proxy
@@ -18,6 +19,8 @@ class BrowserWebSocket:
         self._messages: asyncio.Queue = asyncio.Queue()
         self.open = False
         self.closed = False
+        # When anything last arrived from the server.
+        self.last_heard = time.monotonic()
 
         self._ws = js.WebSocket.new(uri)
         self._handlers = {
@@ -31,10 +34,12 @@ class BrowserWebSocket:
 
     def _on_open(self, _event):
         self.open = True
+        self.last_heard = time.monotonic()
         if not self._opened.done():
             self._opened.set_result(None)
 
     def _on_message(self, event):
+        self.last_heard = time.monotonic()
         if isinstance(event.data, str):
             self._messages.put_nowait(event.data)
 
@@ -44,17 +49,32 @@ class BrowserWebSocket:
             self._opened.set_exception(ConnectionRefusedError("WebSocket connection failed"))
 
     def _on_close(self, _event):
-        self.open = False
-        self.closed = True
         if not self._opened.done():
             self._opened.set_exception(ConnectionRefusedError("WebSocket closed before opening"))
+        self._finish()
+
+    def _finish(self):
+        if self.closed:
+            return
+        self.open = False
+        self.closed = True
         self._messages.put_nowait(_CLOSED)
         for name, handler in self._handlers.items():
             self._ws.removeEventListener(name, handler)
             handler.destroy()
 
+    def abandon(self) -> None:
+        """Ends a connection that has gone silent without waiting for its closing handshake, which on a
+        dead link may never complete."""
+        self._finish()
+        try:
+            self._ws.close()
+        except Exception:
+            pass
+
     async def send(self, data: str) -> None:
-        self._ws.send(data)
+        if self.open:
+            self._ws.send(data)
 
     async def close(self) -> None:
         if not self.closed:

@@ -1,13 +1,14 @@
 // Page logic: find the room's game and matching world bundle, collect any files the world needs,
-// then run the tracker in a worker and render what it reports.
+// run the tracker in a worker, and render what it reports.
 const SVG = "http://www.w3.org/2000/svg";
 const $ = (id) => document.getElementById(id);
 
 // Exposed for automated tests.
-const state = (window.kalapanaState = {
+const ui = (window.kalapanaState = {
   phase: "loading",
   entry: null,
   bootTimings: null,
+  connection: { state: "idle", text: "" },
   trackerLines: [],
   labels: {},
   maps: [],
@@ -26,25 +27,115 @@ const images = new Map();
 const markerNodes = new Map();
 let markerBorder = 8;
 
-function setStatus(text, { error = false } = {}) {
-  $("status").textContent = text;
-  $("status").classList.toggle("error", error);
-  if (error) state.error = text;
+// --- remembered entries -------------------------------------------------------------------------
+// The server, slot and password survive a reload, and the last few combinations that actually
+// connected are offered from the Recent menu. All of it stays in this browser's localStorage.
+
+const STORAGE_KEYS = { fields: "kalapana.connection", recent: "kalapana.recent" };
+const RECENT_MAX = 5;
+
+function loadStored(key, fallback) {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    // Storage can be unavailable or hold junk; the page works without it.
+    return fallback;
+  }
 }
+
+function store(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Unstorable, so it lasts until the page is left.
+  }
+}
+
+function currentFields() {
+  return { address: $("address").value.trim(), slot: $("slot").value.trim(), password: $("password").value };
+}
+
+function fillFields({ address = "", slot = "", password = "" }) {
+  $("address").value = address;
+  $("slot").value = slot;
+  $("password").value = password;
+  store(STORAGE_KEYS.fields, currentFields());
+}
+
+function rememberSuccess(entry) {
+  const sameCombination = (a) => a.address === entry.address && a.slot === entry.slot && (a.password ?? "") === (entry.password ?? "");
+  const recent = loadStored(STORAGE_KEYS.recent, []).filter((item) => !sameCombination(item));
+  recent.unshift({ ...entry, at: Date.now() });
+  store(STORAGE_KEYS.recent, recent.slice(0, RECENT_MAX));
+  renderRecent();
+}
+
+function ago(timestamp) {
+  const minutes = Math.round((Date.now() - timestamp) / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours} h ago`;
+  return `${Math.round(hours / 24)} days ago`;
+}
+
+function renderRecent() {
+  const recent = loadStored(STORAGE_KEYS.recent, []);
+  $("recent-button").hidden = recent.length === 0;
+  $("recent-list").replaceChildren(...recent.map((entry) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    const title = document.createElement("span");
+    title.textContent = `${entry.slot} on ${entry.address}`;
+    const detail = document.createElement("span");
+    detail.className = "hint";
+    detail.textContent = [entry.game, ago(entry.at)].filter(Boolean).join(" · ");
+    button.append(title, detail);
+    button.addEventListener("click", () => {
+      fillFields(entry);
+      $("recent").hidePopover();
+    });
+    const li = document.createElement("li");
+    li.append(button);
+    return li;
+  }));
+}
+
+// --- the status line ----------------------------------------------------------------------------
+// The dot and the sentence always change together. state: "idle" (muted), "connecting", "up", "down".
+
+function setStatus(state, text, { error = false } = {}) {
+  ui.connection = { state, text };
+  if (error) ui.error = text;
+  $("link").className = state === "up" ? "link-state up" : state === "down" ? "link-state down" : "link-state";
+  $("status").className = state === "down" ? "warning status" : "notice status";
+  $("message").textContent = text;
+}
+
+// --- markup -------------------------------------------------------------------------------------
 
 function unescapeMarkup(text) {
   return text.replaceAll("&bl;", "[").replaceAll("&br;", "]").replaceAll("&amp;", "&");
 }
 
-// Renders Kivy-style [color=hex]...[/color] markup; other markup tags are dropped.
+// A color name from the bridge (a UT status or Archipelago text color) or a raw hex value.
+function colorValue(token) {
+  if (/^[0-9a-fA-F]{6}$/.test(token)) return `#${token}`;
+  if (/^[a-z_]+$/.test(token)) return `var(--c-${token}, currentColor)`;
+  return null;
+}
+
+// Renders [color=...]...[/color] markup; other markup tags are dropped.
 function renderMarkup(target, text) {
   target.replaceChildren();
-  const pattern = /\[color=#?([0-9a-fA-F]{6})\]([\s\S]*?)\[\/color\]/g;
+  const pattern = /\[color=#?([0-9A-Za-z_]+)\]([\s\S]*?)\[\/color\]/g;
   let last = 0;
   for (const match of text.matchAll(pattern)) {
     target.append(unescapeMarkup(text.slice(last, match.index)));
     const span = document.createElement("span");
-    span.style.color = `#${match[1]}`;
+    const color = colorValue(match[1]);
+    if (color) span.style.color = color;
     span.textContent = unescapeMarkup(match[2]);
     target.append(span);
     last = match.index + match[0].length;
@@ -53,13 +144,18 @@ function renderMarkup(target, text) {
 }
 
 function addLog(level, { text, markup }) {
-  state.logs.push({ level, text: text ?? unescapeMarkup(markup.replace(/\[\/?color[^\]]*\]/g, "")) });
+  ui.logs.push({ level, text: text ?? unescapeMarkup(markup.replace(/\[\/?color[^\]]*\]/g, "")) });
+  const lines = $("log-lines");
+  const atBottom = lines.scrollHeight - lines.scrollTop - lines.clientHeight < 40;
   const li = document.createElement("li");
   li.className = level;
   if (markup !== undefined) renderMarkup(li, markup);
   else li.textContent = text;
-  $("log-lines").append(li);
+  lines.append(li);
+  if (atBottom) lines.scrollTop = lines.scrollHeight;
 }
+
+// --- finding the room's game --------------------------------------------------------------------
 
 // Opens a short-lived connection to learn the room's datapackage checksums and the slot's game.
 function probeUrl(url, slot, password) {
@@ -124,13 +220,12 @@ async function probe(address, slot, password) {
 
 async function onConnect(event) {
   event.preventDefault();
-  const address = $("address").value.trim();
-  const slot = $("slot").value.trim();
-  const password = $("password").value || null;
+  const { address, slot, password } = currentFields();
+  store(STORAGE_KEYS.fields, currentFields());
   $("connect").disabled = true;
-  setStatus(`Checking ${address}…`);
+  setStatus("connecting", `Checking ${address}…`);
   try {
-    const { url, roomInfo, game } = await probe(address, slot, password);
+    const { url, roomInfo, game } = await probe(address, slot, password || null);
     const checksum = roomInfo.datapackage_checksums?.[game];
     const candidates = catalog.games[game] ?? [];
     if (!candidates.length) throw new Error(`${game} isn't in the tracker catalog.`);
@@ -142,22 +237,21 @@ async function onConnect(event) {
     const entry = matches[0];
     if (entry.disableUt) throw new Error(`The author of ${game} has asked Universal Tracker not to track it.`);
 
-    pending = { url, slot, password, game, entry };
-    state.entry = entry;
+    pending = { url, address, slot, password: password || null, game, entry };
+    ui.entry = entry;
     const sameData = matches.length > 1 ? ` (${matches.length} versions share this datapackage; using the newest)` : "";
     if (entry.needsYaml || entry.map?.externalPack) {
       $("yaml-field").hidden = !entry.needsYaml;
       $("pack-field").hidden = !entry.map?.externalPack;
       $("files").hidden = false;
       const asks = [entry.needsYaml && "your player YAML", entry.map?.externalPack && "optionally its poptracker pack for the map"].filter(Boolean);
-      setStatus(`${game} ${entry.version}${sameData}. Add ${asks.join(" and ")}, then start tracking.`);
-      state.phase = "files";
+      setStatus("idle", `${game} ${entry.version}${sameData}. Add ${asks.join(" and ")}, then start tracking.`);
+      ui.phase = "files";
       return;
     }
-    setStatus(`${game} ${entry.version}${sameData}.`);
     await startTracking();
   } catch (err) {
-    setStatus(err.message, { error: true });
+    setStatus("down", err.message, { error: true });
     $("connect").disabled = false;
   }
 }
@@ -166,7 +260,7 @@ async function startTracking() {
   const { entry } = pending;
   const yamlFile = $("yaml").files[0];
   if (entry.needsYaml && !yamlFile) {
-    setStatus(`${pending.game} needs your player YAML before tracking can start.`, { error: true });
+    setStatus("down", `${pending.game} needs your player YAML before tracking can start.`, { error: true });
     return;
   }
   const fileEntry = async (file) => ({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
@@ -176,8 +270,8 @@ async function startTracking() {
 
   $("files").hidden = true;
   for (const id of ["address", "slot", "password"]) $(id).disabled = true;
-  state.phase = "booting";
-  setStatus(`Starting the tracker for ${pending.game} ${entry.version}…`);
+  ui.phase = "booting";
+  setStatus("connecting", `Starting the tracker for ${pending.game} ${entry.version}…`);
 
   worker = new Worker("worker.mjs", { type: "module" });
   worker.onmessage = onWorkerMessage;
@@ -190,7 +284,15 @@ async function startTracking() {
     pack,
     connect: { address: pending.url, slot: pending.slot, password: pending.password },
   }, transfer);
+  sendVisibility();
 }
+
+// The bridge decides reconnects, so it needs to know whether anyone is looking at the page.
+function sendVisibility() {
+  worker?.postMessage(JSON.stringify({ type: "visibility", visible: document.visibilityState === "visible" }));
+}
+
+// --- the map ------------------------------------------------------------------------------------
 
 function svgElement(name, attributes, parent) {
   const node = document.createElementNS(SVG, name);
@@ -223,7 +325,7 @@ function drawMarkers(markers) {
       : [svgElement("rect", { x: x - half, y: y - half, width: size, height: size, fill: "#DD00FF" }, group)];
     markerNodes.set(marker.id, { shapes, title });
   }
-  state.markers = markers.length;
+  ui.markers = markers.length;
 }
 
 function updateMarkers(updates) {
@@ -232,10 +334,12 @@ function updateMarkers(updates) {
     if (!node) continue;
     // Quadrants are drawn top, right, bottom, left; UT's first color is its most important status.
     const order = node.shapes.length === 4 ? [1, 2, 0, 3] : [0];
-    node.shapes.forEach((shape, i) => shape.setAttribute("fill", `#${colors[order[i]] ?? colors[0]}`));
+    node.shapes.forEach((shape, i) => {
+      shape.style.fill = colorValue(colors[order[i]] ?? colors[0]) ?? "#DD00FF";
+    });
     node.title.textContent = tooltip;
   }
-  state.markerUpdates += updates.length;
+  ui.markerUpdates += updates.length;
 }
 
 function showMapImage(source) {
@@ -250,10 +354,12 @@ function showMapImage(source) {
     image.setAttribute("width", probeImage.naturalWidth);
     image.setAttribute("height", probeImage.naturalHeight);
     svg.prepend(image);
-    state.mapImageLoaded = true;
+    ui.mapImageLoaded = true;
   };
   probeImage.src = url;
 }
+
+// --- messages from the tracker ------------------------------------------------------------------
 
 function onWorkerMessage({ data }) {
   if (typeof data !== "string") {
@@ -264,21 +370,26 @@ function onWorkerMessage({ data }) {
   const message = JSON.parse(data);
   switch (message.type) {
     case "ready":
-      state.phase = "tracking";
-      state.bootTimings = message.timings;
-      setStatus(`Tracking ${pending.game} as ${pending.slot}. Started in ${Object.values(message.timings).reduce((a, b) => a + b, 0).toFixed(1)}s.`);
+      ui.phase = "tracking";
+      ui.bootTimings = message.timings;
       $("command").disabled = false;
       break;
     case "fatal":
-      state.phase = "failed";
-      setStatus("The tracker failed to start. See the Log tab.", { error: true });
+      ui.phase = "failed";
+      setStatus("down", "The tracker failed to start. See the Log view.", { error: true });
       addLog("ERROR", { text: message.text });
+      break;
+    case "connection":
+      setStatus(message.state, message.text);
+      if (message.state === "up" && pending) {
+        rememberSuccess({ address: pending.address, slot: pending.slot, password: pending.password ?? "", game: message.game ?? pending.game });
+      }
       break;
     case "log":
       addLog(message.level, message);
       break;
     case "tracker":
-      state.trackerLines = message.lines;
+      ui.trackerLines = message.lines;
       $("tracker-lines").replaceChildren(...message.lines.map((line) => {
         const li = document.createElement("li");
         renderMarkup(li, line);
@@ -286,7 +397,7 @@ function onWorkerMessage({ data }) {
       }));
       break;
     case "label": {
-      state.labels[message.name] = message.text;
+      ui.labels[message.name] = message.text;
       let node = document.querySelector(`[data-label="${message.name}"]`);
       if (!node) {
         node = document.createElement("span");
@@ -297,7 +408,7 @@ function onWorkerMessage({ data }) {
       break;
     }
     case "show_map":
-      state.maps = message.maps;
+      ui.maps = message.maps;
       $("map-select").replaceChildren(...message.maps.map((name) => new Option(name, name)));
       break;
     case "current_map":
@@ -314,19 +425,24 @@ function onWorkerMessage({ data }) {
       showMapImage(message.source);
       break;
     case "timing":
-      state.updates.push({ at: Date.now(), ...message });
+      ui.updates.push({ at: Date.now(), ...message });
       break;
   }
 }
 
-document.querySelectorAll("nav button").forEach((button) =>
+// --- wiring -------------------------------------------------------------------------------------
+
+document.querySelectorAll(".tabs button").forEach((button) =>
   button.addEventListener("click", () => {
-    document.querySelectorAll("nav button").forEach((other) => other.setAttribute("aria-selected", other === button));
+    document.querySelectorAll(".tabs button").forEach((other) => other.setAttribute("aria-pressed", String(other === button)));
     for (const tab of ["tracker", "map", "log"]) $(`tab-${tab}`).hidden = tab !== button.dataset.tab;
   }),
 );
 $("connect-form").addEventListener("submit", onConnect);
-$("start").addEventListener("click", () => startTracking().catch((err) => setStatus(err.message, { error: true })));
+for (const id of ["address", "slot", "password"]) {
+  $(id).addEventListener("input", () => store(STORAGE_KEYS.fields, currentFields()));
+}
+$("start").addEventListener("click", () => startTracking().catch((err) => setStatus("down", err.message, { error: true })));
 $("map-select").addEventListener("change", (event) => worker?.postMessage(JSON.stringify({ type: "load_map", map: event.target.value })));
 $("command").addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || !event.target.value) return;
@@ -334,17 +450,35 @@ $("command").addEventListener("keydown", (event) => {
   event.target.value = "";
 });
 
-// Server and slot may be prefilled from the query string; never the password.
+$("recent").addEventListener("toggle", (event) => {
+  if (event.newState !== "open") return;
+  const anchor = $("recent-button").getBoundingClientRect();
+  const menu = $("recent");
+  menu.style.top = `${anchor.bottom + 4}px`;
+  menu.style.left = `${Math.max(8, Math.min(anchor.left, window.innerWidth - menu.offsetWidth - 8))}px`;
+});
+$("recent-clear").addEventListener("click", () => {
+  store(STORAGE_KEYS.recent, []);
+  renderRecent();
+  $("recent").hidePopover();
+});
+
+document.addEventListener("visibilitychange", sendVisibility);
+window.addEventListener("online", () => worker?.postMessage(JSON.stringify({ type: "online" })));
+
+// Server and slot may come from the query string (never the password), and otherwise from last time.
 const params = new URLSearchParams(location.search);
+fillFields(loadStored(STORAGE_KEYS.fields, {}));
 for (const field of ["address", "slot"]) if (params.has(field)) $(field).value = params.get(field);
+renderRecent();
 
 try {
   const response = await fetch("/catalog.json", { cache: "no-cache" });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   catalog = await response.json();
-  state.phase = "ready";
-  setStatus(`Ready: ${Object.keys(catalog.games).length} games available for Archipelago ${catalog.archipelagoVersion}.`);
+  ui.phase = "ready";
+  setStatus("idle", `Ready: ${Object.keys(catalog.games).length} games available for Archipelago ${catalog.archipelagoVersion}.`);
   $("connect").disabled = false;
 } catch {
-  setStatus("The tracker catalog isn't available yet. Try again in a few minutes.", { error: true });
+  setStatus("down", "The tracker catalog isn't available yet. Try again in a few minutes.", { error: true });
 }

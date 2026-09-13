@@ -1,15 +1,22 @@
 """Runs Universal Tracker without Kivy by standing in for the widgets it touches.
 
 Everything UT would draw is sent to the page with postMessage: JSON strings for state, and plain
-objects carrying bytes for map images. Text that UT and the server color uses Kivy-style markup,
-[color=hex]...[/color], with &amp; &bl; &br; escapes; the page renders it.
+objects carrying bytes for map images. Colored text uses Kivy-style markup, [color=<name>]...[/color]
+with &amp; &bl; &br; escapes, where <name> is a UT status or an Archipelago text color; the page maps
+names to theme-aware colors.
+
+The bridge also owns reconnection, following puna's journal page: jittered backoff while the tab is
+visible, no attempts while it is hidden, and an immediate attempt when it is shown again.
 """
 import asyncio
 import copy
 import json
 import logging
+import math
 import os
 import pkgutil
+import random
+import sys
 import time
 import zipfile
 from collections import Counter
@@ -17,47 +24,47 @@ from collections import Counter
 import js
 from pyodide.ffi import to_js
 
+import CommonClient
 from CommonClient import server_loop
 from NetUtils import JSONtoTextParser
 from worlds.AutoWorld import AutoWorldRegister
 from worlds.tracker import TrackerClient
 from worlds.tracker.TrackerClient import TrackerGameContext
 
-# Colors from <UTTextColor> in tracker/Tracker.kv.
-UT_COLORS = {
-    "in_logic": "20ff20",
-    "out_of_logic": "cf1010",
-    "glitched": "ffff20",
-    "collected": "3F3F3F",
-    "collected_light": "FFFFFF",
-    "in_logic_glitched": "afff20",
-    "out_of_logic_glitched": "ef5500",
-    "mixed_logic": "ff9f20",
-    "hinted": "3040ff",
-    "hinted_in_logic": "20ffff",
-    "hinted_out_of_logic": "c010ff",
-    "hinted_glitched": "ff9f20",
-    "excluded": "CFCFCF",
-    "excluded_glitched": "ef5500",
-    "unconnected": "89F336",
-    "error": "FF0000",
-    "default": "FFFFFF",
-    "ut_status": "FFFFFF",
-}
+logger = logging.getLogger("Client")
+
+RETRY_MIN_SECONDS = 1.0
+RETRY_MAX_SECONDS = 30.0
+# The browser answers the server's protocol pings itself and never tells the page, so a connection that
+# stopped delivering is only noticed by traffic stopping. After this much silence the bridge asks the
+# server for something; after the longer one it gives the connection up.
+PING_AFTER_SECONDS = 20
+DEAD_AFTER_SECONDS = 45
 
 # Paths of files the user supplied before connecting, keyed by purpose. UT asks for files
 # synchronously in the middle of packet handling, so they have to be in place beforehand.
 UPLOADS: dict[str, str] = {}
 
 ctx: "BrowserTrackerContext | None" = None
+_background_tasks: set[asyncio.Task] = set()
 
 
 def post(message: dict) -> None:
     js.postMessage(json.dumps(message))
 
 
+def post_connection(state: str, text: str, **details) -> None:
+    """state is "connecting", "up" or "down"."""
+    post({"type": "connection", "state": state, "text": text, **details})
+
+
+def display_address(address: str | None) -> str:
+    return (address or "").split("://", 1)[-1]
+
+
 def get_ut_color(name: str) -> str:
-    return UT_COLORS.get(name, "DD00FF")
+    # The page maps status names to theme-aware colors.
+    return name
 
 
 def escape_markup(text: str) -> str:
@@ -79,9 +86,8 @@ class MarkupJSONtoTextParser(JSONtoTextParser):
     def _handle_color(self, node):
         node["text"] = escape_markup(node["text"])
         for color in node["color"].split(";"):
-            code = self.color_codes.get(color)
-            if code:
-                node["text"] = f"[color={code}]{node['text']}[/color]"
+            if color in self.color_codes:
+                node["text"] = f"[color={color}]{node['text']}[/color]"
                 break
         return self._handle_text(node)
 
@@ -308,7 +314,85 @@ class BridgeUI:
         pass
 
 
+class Reconnector:
+    """Tab visibility and backoff state for autoreconnect(). The page reports visibility and network
+    changes through handle()."""
+
+    def __init__(self):
+        self.visible = True
+        self.retry = RETRY_MIN_SECONDS
+        self.events: asyncio.Queue = asyncio.Queue()
+
+    def reset(self) -> None:
+        self.retry = RETRY_MIN_SECONDS
+
+    def notify(self, event: str) -> None:
+        if event in ("visible", "hidden"):
+            self.visible = event == "visible"
+        self.events.put_nowait(event)
+
+    def drain(self) -> None:
+        while not self.events.empty():
+            self.events.get_nowait()
+
+    async def next_event(self, timeout: float | None = None) -> str | None:
+        try:
+            return await asyncio.wait_for(self.events.get(), timeout)
+        except asyncio.TimeoutError:
+            return None
+
+
+reconnector = Reconnector()
+
+
+async def autoreconnect(ctx: "BrowserTrackerContext") -> None:
+    """Replaces CommonClient.server_autoreconnect, which server_loop schedules after a disconnect that
+    wasn't intended."""
+    reconnector.drain()
+    address = display_address(ctx.server_address)
+    while True:
+        if not reconnector.visible:
+            post_connection("down", "Not connected. Will reconnect when you come back to this tab.")
+            if await reconnector.next_event() != "visible":
+                continue
+            # Coming back to the tab is news about the reader, not the server, so start from a clean backoff.
+            reconnector.reset()
+            break
+        wait = reconnector.retry / 2 + random.random() * reconnector.retry / 2
+        reconnector.retry = min(reconnector.retry * 2, RETRY_MAX_SECONDS)
+        post_connection("down", f"Disconnected from {address}. Reconnecting in {math.ceil(wait)}s…")
+        event = await reconnector.next_event(wait)
+        if event is None:
+            break
+        if event == "online":
+            reconnector.reset()
+            break
+    if ctx.server_address and ctx.server_task is None and not ctx.disconnected_intentionally:
+        post_connection("connecting", f"Reconnecting to {address}…")
+        ctx.server_task = asyncio.create_task(server_loop(ctx), name="server loop")
+
+
+async def watch_connection(ctx: "BrowserTrackerContext") -> None:
+    last_ping = 0.0
+    while True:
+        await asyncio.sleep(5)
+        socket = ctx.server.socket if ctx.server else None
+        if socket is None or not ctx.slot or not getattr(socket, "open", False):
+            continue
+        now = time.monotonic()
+        silence = now - socket.last_heard
+        if silence > DEAD_AFTER_SECONDS:
+            logger.warning(f"No traffic from the server for {int(silence)}s; treating the connection as lost.")
+            socket.abandon()
+        elif silence > PING_AFTER_SECONDS and now - last_ping > PING_AFTER_SECONDS:
+            last_ping = now
+            # Any reply proves the link; this key is one CommonClient already reads.
+            await ctx.send_msgs([{"cmd": "Get", "keys": ["_read_race_mode"]}])
+
+
 class BrowserTrackerContext(TrackerGameContext):
+    _loss_message: str | None = None
+
     def run_gui(self) -> None:
         self.ui = BridgeUI(self)
         self.tracker_page = TrackerListStandIn()
@@ -326,6 +410,30 @@ class BrowserTrackerContext(TrackerGameContext):
 
     def gui_error(self, title: str, text) -> None:
         post({"type": "log", "level": "ERROR", "text": f"{title}: {text}"})
+
+    def handle_connection_loss(self, msg: str) -> None:
+        # CommonClient's version also opens a GUI error box; here the banner and the log carry it.
+        logger.exception(msg, exc_info=sys.exc_info(), extra={"compact_gui": True})
+        self._loss_message = msg
+
+    async def connection_closed(self):
+        await super().connection_closed()
+        will_retry = self.server_address and self.username and not self.disconnected_intentionally
+        if not will_retry:
+            post_connection("down", self._loss_message or "Disconnected.")
+        self._loss_message = None
+
+    def on_package(self, cmd: str, args: dict):
+        super().on_package(cmd, args)
+        if cmd == "Connected":
+            reconnector.reset()
+            slot_name = self.player_names.get(self.slot, self.auth)
+            post_connection(
+                "up",
+                f"Connected to {display_address(self.server_address)} as {slot_name} ({self.game}).",
+                slot=slot_name,
+                game=self.game,
+            )
 
     def updateTracker(self):
         started = time.perf_counter()
@@ -378,7 +486,13 @@ class PostLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         if record.name in self.SKIPPED_LOGGERS:
             return
-        post({"type": "log", "level": record.levelname, "text": self.format(record)})
+        message = record.getMessage()
+        # CommonClient's own retry estimate; the banner states kalapana's actual wait.
+        if message.startswith("... automatically reconnecting in"):
+            return
+        # Connection losses are expected during reconnects, so they log as one line, like kvui's compact view.
+        text = message if getattr(record, "compact_gui", False) else self.format(record)
+        post({"type": "log", "level": record.levelname, "text": text})
 
 
 def start(pack_path: str | None = None) -> BrowserTrackerContext:
@@ -387,6 +501,7 @@ def start(pack_path: str | None = None) -> BrowserTrackerContext:
         UPLOADS["poptracker_pack"] = pack_path
     TrackerClient.get_ut_color = get_ut_color
     TrackerClient.open_filename = lambda *args, **kwargs: UPLOADS.get("poptracker_pack")
+    CommonClient.server_autoreconnect = autoreconnect
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)
@@ -398,6 +513,8 @@ def start(pack_path: str | None = None) -> BrowserTrackerContext:
     if any(name.endswith((".yaml", ".yml")) for name in os.listdir("Players")):
         ctx.run_generator()
     ctx.run_gui()
+    watchdog = asyncio.create_task(watch_connection(ctx), name="connection watchdog")
+    _background_tasks.add(watchdog)
     return ctx
 
 
@@ -407,9 +524,14 @@ def handle(message_json: str) -> None:
     if kind == "connect":
         ctx.auth = message["slot"]
         ctx.password = message.get("password") or None
+        post_connection("connecting", f"Connecting to {display_address(message['address'])}…")
         ctx.server_task = asyncio.create_task(server_loop(ctx, message["address"]), name="server loop")
     elif kind == "command":
         ctx.command_processor(ctx)(message["text"])
     elif kind == "load_map":
         ctx.load_map(message["map"])
         ctx.updateTracker()
+    elif kind == "visibility":
+        reconnector.notify("visible" if message["visible"] else "hidden")
+    elif kind == "online":
+        reconnector.notify("online")

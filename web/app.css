@@ -1,130 +1,407 @@
+/* Kalapana's stylesheet, following puna's: hand-written, one palette through light-dark() tokens, and
+ * `color-scheme` on the root deciding the theme (see theme.js). */
+
 :root {
-  color-scheme: dark;
-  --bg: #16181d;
-  --panel: #1f232b;
-  --line: #2e3440;
-  --text: #e6e6e6;
-  --muted: #9aa3b2;
-  --error: #ff6b6b;
+  color-scheme: light dark;
+
+  --bg: light-dark(#fbfbfa, #16181c);
+  --surface: light-dark(#ffffff, #1e2127);
+  --border: light-dark(#d9d9d6, #333842);
+  --text: light-dark(#1b1c1e, #e6e7ea);
+  --muted: light-dark(#5f6570, #969ca8);
+  --link: light-dark(#1a5fb4, #7cb0f0);
+  --accent: light-dark(#1a5fb4, #7cb0f0);
+  --warn-fg: light-dark(#7a4c00, #f0c86a);
+  --warn-bg: light-dark(#fdf3dd, #33280f);
+  --err-fg: light-dark(#a01b1b, #f29090);
+  --err-bg: light-dark(#fdeaea, #3a1d1d);
+  --link-up: light-dark(#1a7f37, #4cc264);
+  --link-down: light-dark(#c02626, #f2696e);
+  --float-shadow: light-dark(rgb(0 0 0 / 0.18), rgb(0 0 0 / 0.5));
+  --feed-bg: light-dark(#ffffff, #16181c);
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --radius: 6px;
+
+  /* Colors the bridge refers to by name. Dark values are Universal Tracker's (tracker/Tracker.kv) and
+     Archipelago's text colors (kvui), which were chosen for a dark ground; the light values are
+     darker counterparts that read on a light one. */
+  --c-in_logic: light-dark(#1a7f37, #20ff20);
+  --c-out_of_logic: light-dark(#c02626, #cf1010);
+  --c-glitched: light-dark(#8a6d00, #ffff20);
+  --c-collected: light-dark(#8c9199, #3f3f3f);
+  --c-collected_light: light-dark(#1b1c1e, #ffffff);
+  --c-in_logic_glitched: light-dark(#5a7f00, #afff20);
+  --c-out_of_logic_glitched: light-dark(#b84400, #ef5500);
+  --c-mixed_logic: light-dark(#a85300, #ff9f20);
+  --c-hinted: light-dark(#1f45c8, #3040ff);
+  --c-hinted_in_logic: light-dark(#007e91, #20ffff);
+  --c-hinted_out_of_logic: light-dark(#8a2be2, #c010ff);
+  --c-hinted_glitched: light-dark(#a85300, #ff9f20);
+  --c-excluded: light-dark(#6e7681, #cfcfcf);
+  --c-excluded_glitched: light-dark(#b84400, #ef5500);
+  --c-unconnected: light-dark(#4d7c0f, #89f336);
+  --c-error: light-dark(#c02626, #ff0000);
+  --c-default: var(--text);
+  --c-ut_status: var(--text);
+  --c-white: var(--text);
+  --c-black: light-dark(#000000, #6d7480);
+  --c-red: light-dark(#c02626, #ee0000);
+  --c-green: light-dark(#007a29, #00ff7f);
+  --c-yellow: light-dark(#8a6d00, #fafad2);
+  --c-blue: light-dark(#1a5fb4, #6495ed);
+  --c-magenta: light-dark(#b5008a, #ee00ee);
+  --c-cyan: light-dark(#007e91, #00eeee);
+  --c-slateblue: light-dark(#3b5bdb, #6d8be8);
+  --c-plum: light-dark(#8250df, #af99ef);
+  --c-salmon: light-dark(#c0392b, #fa8072);
+  --c-orange: light-dark(#b35900, #ff7700);
 }
 
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+/* The page is a frame onto a live view, sized to the window like puna's feed page: the active panel
+   takes the leftover height and scrolls inside itself. `height`, not `min-height`, so the size is
+   definite and the panel is what shrinks. */
 body {
   margin: 0;
-  font: 14px/1.4 system-ui, sans-serif;
   background: var(--bg);
   color: var(--text);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
 }
 
-header {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line);
-}
+/* Author `display` rules would otherwise beat the UA's [hidden] rule. */
+[hidden] { display: none !important; }
 
-form, #files {
+a { color: var(--link); }
+a:hover { text-decoration: none; }
+
+/* --- the shell --- */
+
+.topbar {
   display: flex;
-  gap: 8px;
-  align-items: center;
   flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
 }
 
-#files[hidden] {
-  display: none;
+.topbar nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+  margin-left: auto;
 }
 
-#files {
-  margin-top: 8px;
-}
-
-input, select, button {
-  font: inherit;
-  background: var(--panel);
+.brand {
+  font-weight: 700;
+  font-size: 1.1rem;
+  text-decoration: none;
   color: var(--text);
-  border: 1px solid var(--line);
-  padding: 4px 8px;
 }
 
-button {
+/* --- the theme selector, revealed by theme.js --- */
+
+.theme { display: none; }
+
+.js-theme .theme {
+  display: inline-flex;
+  align-self: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.theme button {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.4rem;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: calc(var(--radius) - 3px);
   cursor: pointer;
 }
 
-button:disabled, input:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
+.theme button:hover { color: var(--text); }
+.theme button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-#status {
-  margin: 8px 0 0;
-  color: var(--muted);
-}
-
-#status.error {
-  color: var(--error);
-}
-
-nav {
-  display: flex;
-  gap: 4px;
-  padding: 6px 12px 0;
-}
-
-nav button {
-  border-bottom: none;
-}
-
-nav button[aria-selected="true"] {
-  background: var(--line);
+:root:not([data-theme]) .theme button[data-set="system"],
+:root[data-theme="light"] .theme button[data-set="light"],
+:root[data-theme="dark"] .theme button[data-set="dark"] {
+  color: var(--text);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 
 main {
   flex: 1;
-  overflow: auto;
-}
-
-section {
-  padding: 12px;
-}
-
-#labels {
+  min-height: 0;
+  width: 100%;
+  max-width: 96rem;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 1rem 1rem;
   display: flex;
-  gap: 24px;
-  flex-wrap: wrap;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 8px;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
-#tracker-lines, #log-lines {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-family: ui-monospace, monospace;
+/* Flex items don't collapse margins, so one gap from the container spaces everything. */
+main > * {
+  margin-top: 0;
+  margin-bottom: 0;
 }
 
-#log-lines li {
-  white-space: pre-wrap;
-}
+/* --- forms --- */
 
-#log-lines li.ERROR {
-  color: var(--error);
-}
-
-#map-controls {
-  display: flex;
-  gap: 8px;
+label {
+  display: inline-flex;
   align-items: center;
-  margin-bottom: 8px;
+  gap: 0.4rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+input[type="text"],
+input[type="password"],
+select {
+  font: inherit;
+  padding: 0.4rem 0.5rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+button {
+  font: inherit;
+  padding: 0.4rem 0.9rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button:hover { border-color: var(--muted); }
+button:disabled, input:disabled { opacity: 0.6; cursor: default; }
+
+.connect,
+.files {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+}
+
+.connect input[type="text"] { width: 14rem; max-width: 100%; }
+.connect #slot { width: 10rem; }
+.connect input[type="password"] { width: 10rem; }
+
+.linklike {
+  padding: 0;
+  font: inherit;
+  color: var(--link);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.linklike:hover { text-decoration: none; }
+
+.hint {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --- the recent-connections menu: a popover, positioned under its button by app.mjs --- */
+
+[popover].menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: max-content;
+  min-width: 16rem;
+  max-width: calc(100vw - 2rem);
+  padding: 0.5rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 30px var(--float-shadow);
+}
+
+.menu .hint { margin: 0 0 0.3rem; padding: 0 0.4rem; font-size: 0.85rem; }
+.menu ul { list-style: none; margin: 0 0 0.4rem; padding: 0; }
+
+.menu li button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 0.35rem 0.4rem;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--radius);
+}
+
+.menu li button:hover,
+.menu li button:focus-visible { background: var(--bg); }
+.menu .linklike { margin: 0 0.4rem; font-size: 0.85rem; }
+
+@supports not selector(:popover-open) {
+  [popover].menu { display: none; }
+}
+
+/* --- the connection status line and its dot --- */
+
+.notice,
+.warning {
+  padding: 0.6rem 1rem;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.warning {
+  border-left-color: var(--warn-fg);
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+}
+
+.status {
+  display: flex;
+  align-items: baseline;
+}
+
+/* A second signal beside the words, never the only one (aria-hidden in the markup). Muted until the
+   first connection attempt. */
+.link-state {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  margin-right: 0.5rem;
+  background: var(--muted);
+}
+
+.link-state.up { background: var(--link-up); }
+.link-state.down { background: var(--link-down); }
+
+/* --- the view selector --- */
+
+.segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.segmented button {
+  padding: 0.2rem 0.7rem;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: calc(var(--radius) - 3px);
+}
+
+.segmented button:hover { color: var(--text); }
+.segmented button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.segmented button[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+/* --- the panels --- */
+
+.panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1.5rem;
+  font-size: 0.9rem;
+}
+
+.lines {
+  flex: 1;
+  min-height: 12rem;
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+  list-style: none;
+  overflow-x: auto;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  background: var(--feed-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+#log-lines li { white-space: pre-wrap; }
+.lines li.ERROR { color: var(--err-fg); }
+.lines li.WARNING { color: var(--warn-fg); }
+
+.map-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Kept dark in both themes: pack art is drawn for it, and the marker colors are UT's dark values. */
+.map-frame {
+  flex: 1;
+  min-height: 12rem;
+  overflow: auto;
+  color-scheme: dark;
+  background: #000;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 
 #map {
+  display: block;
   width: 100%;
-  max-height: calc(100vh - 220px);
-  background: #000;
+  height: 100%;
 }
 
 #command {
-  margin: 0 12px 12px;
-  padding: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--mono);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
 }

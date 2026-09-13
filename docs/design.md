@@ -79,15 +79,24 @@ flowchart LR
   3. Choose the newest catalog entry whose checksum matches the room's checksum for that game.
   4. If the entry needs a YAML, require one; if its map needs an external pack, offer an optional upload.
   5. Start the worker.
+
+  The page follows puna's look, with its light, dark and system theme selector. Server, slot and password are kept in localStorage so a reload doesn't clear them. The last 5 distinct combinations that connected are offered in a Recent menu.
 - **Worker** (`web/worker.mjs`):
   1. Load Pyodide from kalapana and the packages the entries list.
   2. Unpack the core, tracker and world bundles at `/`, and place the uploaded files.
   3. Run `kalapana_boot.prepare()` and install the WebSocket shim.
   4. Start the bridge and connect UT.
 - **Bridge** (`runtime/ui_bridge.py`). It stands in for the Kivy widgets UT touches: tracker list, header labels, map markers and images, and the `ui` object. It sends their updates to the page:
-  - server text as Kivy-style `[color=hex]` markup, not ANSI escapes;
+  - server text as Kivy-style `[color=name]` markup, not ANSI escapes. The page maps each name to a CSS token with light and dark values;
   - nested message lists from `/explain` flattened;
-  - the startup generation skipped when no YAML was supplied, since UT regenerates YAML-less worlds on connect.
+  - the startup generation skipped when no YAML was supplied, since UT regenerates YAML-less worlds on connect;
+  - connection state, shown as a dot and a sentence as on puna's journal page.
+- **Reconnecting.** The bridge replaces CommonClient's autoreconnect with the journal page's policy:
+  - after a drop it retries with a jittered delay that doubles from 1 second up to 30;
+  - while the tab is hidden the connection stays open, but a lost connection isn't retried until the tab is shown again;
+  - showing the tab or the browser coming back online retries immediately.
+
+  The page can't see WebSocket pings, so a watchdog sends a harmless `Get` after 20 seconds without traffic and abandons the connection after 45. `spikes/07-kalapana/reconnect.mjs` checks this against a real server that is killed, restarted and frozen.
 
 ### Shared data directory
 
@@ -174,6 +183,7 @@ Until then, the page accepts `?address=&slot=` in the query string. It never acc
 - **Rooms without TLS** can't be reached from an https page.
 - **No saved library yet.** The test instance doesn't keep uploaded YAMLs and packs between visits. OPFS persistence was proven in the spikes but isn't wired in.
 - **Missing UI.** No hints tab, command autocomplete, map groups or location icons yet.
+- **Saved password.** The room password is kept in plain text in the browser's localStorage, along with the Recent list.
 - **Safari** is untested.
 - **Randomized YAML options.** UT's own limitation still applies: they need the rolled values filled in.
 

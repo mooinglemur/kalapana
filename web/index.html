@@ -6,41 +6,80 @@
   <title>Universal Tracker</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="app.css">
+  <script src="theme.js"></script>
   <script type="module" src="app.mjs"></script>
 </head>
 <body>
-  <header>
-    <form id="connect-form">
-      <label>Server <input id="address" required placeholder="mw.ionium.us:50000" autocomplete="off"></label>
-      <label>Slot <input id="slot" required size="14" autocomplete="off"></label>
-      <label>Password <input id="password" type="password" size="12" autocomplete="off"></label>
+  <header class="topbar">
+    <a class="brand" href="/">Universal Tracker</a>
+    <nav>
+      <div class="theme" role="group" aria-label="Color theme" data-theme-toggle>
+        <button type="button" data-set="light" aria-pressed="false" title="Light theme" aria-label="Use the light theme">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
+            <circle cx="8" cy="8" r="3.1" fill="none" stroke="currentColor"/>
+            <path d="M8 .9v1.9M8 13.2v1.9M.9 8h1.9M13.2 8h1.9M2.98 2.98 4.3 4.3M11.7 11.7l1.32 1.32M13.02 2.98 11.7 4.3M4.3 11.7l-1.32 1.32" fill="none" stroke="currentColor" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <button type="button" data-set="dark" aria-pressed="false" title="Dark theme" aria-label="Use the dark theme">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
+            <path d="M13.6 10.2A5.9 5.9 0 0 1 5.8 2.4a5.9 5.9 0 1 0 7.8 7.8z" fill="none" stroke="currentColor" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <button type="button" data-set="system" aria-pressed="false" title="Follow the system theme" aria-label="Follow the system theme">
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" focusable="false">
+            <rect x="1.4" y="2.4" width="13.2" height="9" rx="1.4" fill="none" stroke="currentColor"/>
+            <path d="M5.4 14h5.2M8 11.4V14" fill="none" stroke="currentColor" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <form id="connect-form" class="connect" autocomplete="off">
+      <label>Server <input id="address" type="text" required placeholder="mw.ionium.us:50000" spellcheck="false"></label>
+      <label>Slot <input id="slot" type="text" required spellcheck="false"></label>
+      <label>Password <input id="password" type="password"></label>
       <button id="connect" type="submit" disabled>Connect</button>
+      <button id="recent-button" type="button" popovertarget="recent" hidden>Recent</button>
     </form>
-    <div id="files" hidden>
+
+    <div id="recent" class="menu" popover>
+      <p class="hint">Recent connections</p>
+      <ul id="recent-list"></ul>
+      <button id="recent-clear" type="button" class="linklike">Forget these</button>
+    </div>
+
+    <div id="files" class="files" hidden>
       <label id="yaml-field" hidden>Player YAML <input id="yaml" type="file" accept=".yaml,.yml"></label>
       <label id="pack-field" hidden>Poptracker pack (optional) <input id="pack" type="file" accept=".zip"></label>
       <button id="start" type="button">Start tracking</button>
     </div>
-    <p id="status" role="status">Loading catalog…</p>
-  </header>
-  <nav>
-    <button type="button" data-tab="tracker" aria-selected="true">Tracker</button>
-    <button type="button" data-tab="map">Map</button>
-    <button type="button" data-tab="log">Log</button>
-  </nav>
-  <main>
-    <section id="tab-tracker">
-      <div id="labels"></div>
-      <ul id="tracker-lines"></ul>
+
+    <p id="status" class="notice status" role="status">
+      <span id="link" class="link-state" aria-hidden="true"></span>
+      <span id="message">Loading the tracker catalog&hellip;</span>
+    </p>
+
+    <div class="segmented tabs" role="group" aria-label="View">
+      <button type="button" data-tab="tracker" aria-pressed="true">Tracker</button>
+      <button type="button" data-tab="map" aria-pressed="false">Map</button>
+      <button type="button" data-tab="log" aria-pressed="false">Log</button>
+    </div>
+
+    <section id="tab-tracker" class="panel">
+      <div id="labels" class="labels"></div>
+      <ul id="tracker-lines" class="lines"></ul>
     </section>
-    <section id="tab-map" hidden>
-      <div id="map-controls"><select id="map-select" aria-label="Map"></select><span id="current-map"></span></div>
-      <svg id="map" xmlns="http://www.w3.org/2000/svg"></svg>
+    <section id="tab-map" class="panel" hidden>
+      <div class="map-controls"><select id="map-select" aria-label="Map"></select><span id="current-map" class="hint"></span></div>
+      <div class="map-frame"><svg id="map" xmlns="http://www.w3.org/2000/svg"></svg></div>
     </section>
-    <section id="tab-log" hidden>
-      <ul id="log-lines"></ul>
+    <section id="tab-log" class="panel" hidden>
+      <ul id="log-lines" class="lines"></ul>
     </section>
+
+    <input id="command" type="text" placeholder="/help, /explain &lt;location&gt;, or chat" autocomplete="off" disabled>
   </main>
-  <input id="command" placeholder="/help, /explain &lt;location&gt;, or chat" autocomplete="off" disabled>
 </body>
 </html>

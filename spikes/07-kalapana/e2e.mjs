@@ -43,7 +43,7 @@ try {
     page.waitForFunction((list) => list.includes(window.kalapanaState.phase) || window.kalapanaState.error, { timeout }, wanted);
 
   await phase(["ready"], 30_000);
-  say("status:", await page.$eval("#status", (el) => el.textContent));
+  say("status:", await page.$eval("#message", (el) => el.textContent));
 
   await page.click("#connect");
   await phase(["files", "booting", "tracking", "failed"], 60_000);
@@ -64,11 +64,15 @@ try {
   current = await page.evaluate(() => ({ phase: window.kalapanaState.phase, error: window.kalapanaState.error, bootTimings: window.kalapanaState.bootTimings }));
   say("tracking:", JSON.stringify(current));
   if (current.phase !== "tracking") throw new Error(current.error ?? "tracker failed to start");
+  await page.waitForFunction(() => window.kalapanaState.connection?.state === "up", { timeout: 60_000 });
   await page.screenshot({ path: `${shotDir}/${slot}-tracker.png` });
+  await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }]);
+  await page.screenshot({ path: `${shotDir}/${slot}-tracker-dark.png` });
+  await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);
 
   const maps = await page.evaluate(() => window.kalapanaState.maps.length);
   if (maps) {
-    await page.click('nav button[data-tab="map"]');
+    await page.click('.tabs button[data-tab="map"]');
     await page.waitForFunction(() => window.kalapanaState.mapImageLoaded && window.kalapanaState.markerUpdates > 0, { timeout: 120_000 });
     await page.screenshot({ path: `${shotDir}/${slot}-map.png` });
     say(`map rendered: ${maps} maps`);
@@ -83,7 +87,7 @@ try {
     const lines = await page.evaluate((count) => window.kalapanaState.logs.slice(count), before);
     say(`${options.explain} ->`);
     for (const line of lines) say(`  ${line.level}: ${line.text.split("\n").slice(-1)[0].slice(0, 160)}`);
-    await page.click('nav button[data-tab="log"]');
+    await page.click('.tabs button[data-tab="log"]');
     await page.screenshot({ path: `${shotDir}/${slot}-log.png` });
   }
 
