@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Spike 4: persistence</title>
+</head>
+<body>
+  <pre id="log"></pre>
+  <script type="module">
+    const phase = new URLSearchParams(location.search).get("phase") ?? "verify";
+    const logEl = document.getElementById("log");
+    const worker = new Worker("./worker.js", { type: "module" });
+
+    window.spikeResult = new Promise((resolve) => {
+      worker.onmessage = ({ data }) => {
+        if (data.type === "log") {
+          logEl.textContent += data.message + "\n";
+          console.log(data.message);
+        } else {
+          resolve(data);
+        }
+      };
+    });
+    worker.postMessage({ phase });
+  </script>
+</body>
+</html>

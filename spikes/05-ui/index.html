@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spike 5: Universal Tracker bridge</title>
+  <style>
+    :root { color-scheme: dark; --bg: #16181d; --panel: #1f232b; --line: #2e3440; --text: #e6e6e6; --muted: #9aa3b2; }
+    body { margin: 0; font: 14px/1.4 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    header { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+    header input { background: var(--panel); color: var(--text); border: 1px solid var(--line); padding: 4px 6px; }
+    #status { color: var(--muted); margin-left: auto; }
+    nav { display: flex; gap: 4px; padding: 6px 12px 0; }
+    nav button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-bottom: none; padding: 6px 12px; cursor: pointer; }
+    nav button[aria-selected="true"] { background: var(--line); }
+    section { padding: 12px; }
+    #labels { display: flex; gap: 24px; flex-wrap: wrap; padding-bottom: 8px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+    #tracker-lines, #log-lines { margin: 0; padding: 0; list-style: none; font-family: ui-monospace, monospace; }
+    #log-lines li.ERROR { color: #ff6b6b; }
+    #map-controls { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+    #map-controls select { background: var(--panel); color: var(--text); border: 1px solid var(--line); }
+    #map { width: 100%; max-height: calc(100vh - 170px); background: #000; }
+    #command { width: calc(100% - 24px); margin: 0 12px 12px; background: var(--panel); color: var(--text); border: 1px solid var(--line); padding: 6px; }
+  </style>
+</head>
+<body>
+  <header>
+    <label>Server <input id="address" value="ws://127.0.0.1:38281"></label>
+    <label>Slot <input id="slot" value="Tuner" size="10"></label>
+    <button id="connect" disabled>Connect</button>
+    <span id="status">Booting Python…</span>
+  </header>
+  <nav>
+    <button data-tab="tracker" aria-selected="true">Tracker</button>
+    <button data-tab="map">Map</button>
+    <button data-tab="log">Log</button>
+  </nav>
+  <section id="tab-tracker">
+    <div id="labels"></div>
+    <ul id="tracker-lines"></ul>
+  </section>
+  <section id="tab-map" hidden>
+    <div id="map-controls"><select id="map-select"></select><span id="current-map"></span></div>
+    <svg id="map" xmlns="http://www.w3.org/2000/svg"></svg>
+  </section>
+  <section id="tab-log" hidden>
+    <ul id="log-lines"></ul>
+  </section>
+  <input id="command" placeholder="/help, /explain <location>, or chat">
+
+  <script type="module">
+    const SVG = "http://www.w3.org/2000/svg";
+    const $ = (id) => document.getElementById(id);
+    const state = window.spikeState = {
+      ready: false, timings: null, trackerLines: [], labels: {}, markers: 0, markerUpdates: 0,
+      mapImageLoaded: false, maps: [], logs: [], fatal: null,
+    };
+    const images = new Map();
+    const markerNodes = new Map();
+    let border = 8;
+
+    const worker = new Worker("./worker.js", { type: "module" });
+    const send = (message) => worker.postMessage(JSON.stringify(message));
+
+    // UT emits Kivy markup: [color=hex]text[/color].
+    function renderMarkup(target, text) {
+      target.replaceChildren();
+      const pattern = /\[color=#?([0-9a-fA-F]{6})\](.*?)\[\/color\]/g;
+      let last = 0;
+      for (const match of text.matchAll(pattern)) {
+        target.append(text.slice(last, match.index));
+        const span = document.createElement("span");
+        span.style.color = `#${match[1]}`;
+        span.textContent = match[2];
+        target.append(span);
+        last = match.index + match[0].length;
+      }
+      target.append(text.slice(last));
+    }
+
+    function addLog(level, text) {
+      state.logs.push({ level, text });
+      const li = document.createElement("li");
+      li.className = level;
+      li.textContent = text;
+      $("log-lines").append(li);
+    }
+
+    function el(name, attrs, parent) {
+      const node = document.createElementNS(SVG, name);
+      for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+      parent?.append(node);
+      return node;
+    }
+
+    function drawMarkers(markers) {
+      const layer = $("map").querySelector("#markers") ?? el("g", { id: "markers" }, $("map"));
+      layer.replaceChildren();
+      markerNodes.clear();
+      for (const m of markers) {
+        const half = m.size / 2;
+        const group = el("g", m.kind === "deferred" ? { transform: `rotate(45 ${m.x} ${m.y}) scale(1)` } : {}, layer);
+        el("rect", { x: m.x - half - border, y: m.y - half - border, width: m.size + 2 * border, height: m.size + 2 * border, fill: "#000" }, group);
+        const title = el("title", {}, group);
+        let shapes;
+        if (m.kind === "split") {
+          const { x, y } = m;
+          shapes = [
+            [x, y, x - half, y - half, x + half, y - half],
+            [x, y, x + half, y - half, x + half, y + half],
+            [x, y, x - half, y + half, x + half, y + half],
+            [x, y, x - half, y - half, x - half, y + half],
+          ].map((points) => el("polygon", { points: points.join(" "), fill: "#DD00FF" }, group));
+        } else {
+          shapes = [el("rect", { x: m.x - half, y: m.y - half, width: m.size, height: m.size, fill: "#DD00FF" }, group)];
+        }
+        markerNodes.set(m.id, { shapes, title });
+      }
+      state.markers = markers.length;
+    }
+
+    function updateMarkers(updates) {
+      for (const { id, colors, tooltip } of updates) {
+        const node = markerNodes.get(id);
+        if (!node) continue;
+        // Quadrants drawn top, right, bottom, left; UT's first color is its most important status.
+        const order = node.shapes.length === 4 ? [1, 2, 0, 3] : [0];
+        node.shapes.forEach((shape, i) => shape.setAttribute("fill", `#${colors[order[i]] ?? colors[0]}`));
+        node.title.textContent = tooltip;
+      }
+      state.markerUpdates += updates.length;
+    }
+
+    function showImage(source) {
+      const url = images.get(source);
+      if (!url) return;
+      const probe = new Image();
+      probe.onload = () => {
+        const svg = $("map");
+        svg.setAttribute("viewBox", `0 0 ${probe.naturalWidth} ${probe.naturalHeight}`);
+        const image = svg.querySelector("image") ?? el("image", {}, null);
+        image.setAttribute("href", url);
+        image.setAttribute("width", probe.naturalWidth);
+        image.setAttribute("height", probe.naturalHeight);
+        svg.prepend(image);
+        state.mapImageLoaded = true;
+      };
+      probe.src = url;
+    }
+
+    worker.onmessage = ({ data }) => {
+      if (typeof data !== "string") {
+        // Image bytes arrive as a plain object so they skip JSON encoding.
+        images.set(data.source, URL.createObjectURL(new Blob([data.bytes], { type: "image/png" })));
+        return;
+      }
+      const message = JSON.parse(data);
+      switch (message.type) {
+        case "ready":
+          state.ready = true;
+          state.timings = message.timings;
+          $("status").textContent = `Ready (${Object.entries(message.timings).map(([k, v]) => `${k} ${v}s`).join(", ")})`;
+          $("connect").disabled = false;
+          break;
+        case "fatal":
+          state.fatal = message.text;
+          $("status").textContent = "Failed to start";
+          addLog("ERROR", message.text);
+          break;
+        case "log":
+          addLog(message.level, message.text);
+          break;
+        case "tracker": {
+          state.trackerLines = message.lines;
+          const list = $("tracker-lines");
+          list.replaceChildren(...message.lines.map((line) => {
+            const li = document.createElement("li");
+            renderMarkup(li, line);
+            return li;
+          }));
+          break;
+        }
+        case "label": {
+          state.labels[message.name] = message.text;
+          let node = document.querySelector(`[data-label="${message.name}"]`);
+          if (!node) {
+            node = document.createElement("span");
+            node.dataset.label = message.name;
+            $("labels").append(node);
+          }
+          renderMarkup(node, message.text);
+          break;
+        }
+        case "show_map":
+          state.maps = message.maps;
+          $("map-select").replaceChildren(...message.maps.map((name) => new Option(name, name)));
+          break;
+        case "current_map":
+          $("current-map").textContent = message.name;
+          break;
+        case "map_markers":
+          border = message.border;
+          drawMarkers(message.markers);
+          break;
+        case "marker_status":
+          updateMarkers(message.updates);
+          break;
+        case "map_image":
+          showImage(message.source);
+          break;
+        case "address":
+        case "map_icons":
+          break;
+      }
+    };
+
+    document.querySelectorAll("nav button").forEach((button) => button.addEventListener("click", () => {
+      document.querySelectorAll("nav button").forEach((b) => b.setAttribute("aria-selected", b === button));
+      for (const tab of ["tracker", "map", "log"]) $(`tab-${tab}`).hidden = tab !== button.dataset.tab;
+    }));
+    $("connect").addEventListener("click", () => send({ type: "connect", address: $("address").value, slot: $("slot").value }));
+    $("map-select").addEventListener("change", (event) => send({ type: "load_map", map: event.target.value }));
+    $("command").addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || !event.target.value) return;
+      send({ type: "command", text: event.target.value });
+      event.target.value = "";
+    });
+  </script>
+</body>
+</html>
