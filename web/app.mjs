@@ -554,6 +554,8 @@ function resetView({ clearLog = false } = {}) {
   $("map").removeAttribute("viewBox");
   $("command").value = "";
   $("command").disabled = true;
+  commandNames = null;
+  hideSuggestions();
   Object.assign(ui, {
     entry: null, bootTimings: null, trackerLines: [], labels: {}, maps: [],
     markers: 0, markerUpdates: 0, mapImageLoaded: false, updates: [], error: null,
@@ -651,6 +653,10 @@ function onWorkerMessage({ data }) {
       ui.phase = "tracking";
       ui.bootTimings = message.timings;
       $("command").disabled = false;
+      break;
+    case "names":
+      commandNames = message;
+      if (document.activeElement === $("command")) updateSuggestions();
       break;
     case "inspected":
       onInspected(message);
@@ -797,8 +803,94 @@ for (const id of ["address", "slot", "password"]) {
 }
 $("start").addEventListener("click", () => startTracking().catch((err) => setStatus("down", err.message, { error: true })));
 $("map-select").addEventListener("change", (event) => worker?.postMessage(JSON.stringify({ type: "load_map", map: event.target.value })));
+// --- name suggestions ---------------------------------------------------------------------------
+// As in puna's moderation form: the game's own names, offered while a command that takes one is
+// typed. The bridge sends the lists (see post_names in ui_bridge.py).
+
+const NAME_COMMANDS = { "!hint": "hint_items", "!hint_location": "hint_locations", "!getitem": "items", "/explain": "explain" };
+const SUGGESTIONS_MAX = 100;
+let commandNames = null;
+// navigated: a name was picked with the arrow keys, so Enter takes it instead of sending.
+const suggesting = { command: "", matches: [], active: 0, navigated: false };
+
+function hideSuggestions() {
+  $("suggestions").hidden = true;
+  $("command").setAttribute("aria-expanded", "false");
+  $("command").removeAttribute("aria-activedescendant");
+  suggesting.matches = [];
+}
+
+function updateSuggestions() {
+  const typed = /^(\S+) (.*)$/s.exec($("command").value);
+  const names = typed && commandNames?.[NAME_COMMANDS[typed[1].toLowerCase()]];
+  if (!names) return hideSuggestions();
+  const query = typed[2].trim().toLowerCase();
+  // Names that start with what was typed come first, then names that contain it.
+  const starting = [];
+  const containing = [];
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    if (lower.startsWith(query)) starting.push(name);
+    else if (lower.includes(query)) containing.push(name);
+  }
+  const matches = [...starting, ...containing].slice(0, SUGGESTIONS_MAX);
+  if (!matches.length || (matches.length === 1 && matches[0].toLowerCase() === query)) return hideSuggestions();
+
+  Object.assign(suggesting, { command: typed[1], matches, navigated: false });
+  $("suggestions").replaceChildren(...matches.map((name, index) => {
+    const option = document.createElement("li");
+    option.id = `suggestion-${index}`;
+    option.setAttribute("role", "option");
+    option.textContent = name;
+    // mousedown rather than click, so the box keeps focus and doesn't close the list first.
+    option.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      completeSuggestion(index);
+    });
+    return option;
+  }));
+  $("suggestions").hidden = false;
+  $("command").setAttribute("aria-expanded", "true");
+  highlightSuggestion(0);
+}
+
+function highlightSuggestion(index) {
+  const options = [...$("suggestions").children];
+  suggesting.active = (index + options.length) % options.length;
+  options.forEach((option, i) => option.setAttribute("aria-selected", String(i === suggesting.active)));
+  $("command").setAttribute("aria-activedescendant", options[suggesting.active].id);
+  options[suggesting.active].scrollIntoView({ block: "nearest" });
+}
+
+function completeSuggestion(index = suggesting.active) {
+  $("command").value = `${suggesting.command} ${suggesting.matches[index]}`;
+  hideSuggestions();
+}
+
+$("command").addEventListener("input", updateSuggestions);
+$("command").addEventListener("blur", hideSuggestions);
 $("command").addEventListener("keydown", (event) => {
+  if (!$("suggestions").hidden) {
+    if (event.key === "Tab" && !event.shiftKey) {
+      event.preventDefault();
+      return completeSuggestion();
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      suggesting.navigated = true;
+      return highlightSuggestion(suggesting.active + (event.key === "ArrowDown" ? 1 : -1));
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      return hideSuggestions();
+    }
+    if (event.key === "Enter" && suggesting.navigated) {
+      event.preventDefault();
+      return completeSuggestion();
+    }
+  }
   if (event.key !== "Enter" || !event.target.value) return;
+  hideSuggestions();
   // Replies and chat only appear in the log.
   showTab("log");
   worker?.postMessage(JSON.stringify({ type: "command", text: event.target.value }));

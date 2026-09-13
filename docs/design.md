@@ -92,6 +92,8 @@ flowchart LR
 
   The log keeps its most recent 2000 lines, on the page and in memory. When older lines are dropped, a reader scrolled back through the log keeps their place.
 
+  **Name suggestions.** After `!hint`, `!hint_location`, `!getitem` or `/explain` and a space, the command box lists matching names, prefix matches first, and Tab (or Enter after choosing with the arrow keys) completes one. The bridge sends each list once per generated multiworld, matching what the command itself accepts: item names and groups, location names and groups, item names, and the generated world's locations and regions.
+
   **Datapackage cache.** CommonClient caches downloaded datapackages in a cache directory, which in the worker is memory that ends with the session. Instead, the page owns a cache in IndexedDB (`web/datapackage-cache.mjs`), keyed by game and checksum, with the least recently used evicted past 100 MB.
   - **Starting a session:** while the worker boots, the page loads the room's other games from the cache, and downloads the rest from the room with `GetDataPackage`, which needs no login. It hands them to `runtime/datapackage_cache.py`, which answers AP's load function, and saves the downloads.
   - **Integrity:** world code in the worker, including uploaded apworlds, can write to the origin's IndexedDB. A client can't recompute a datapackage checksum, because servers don't send the item and location name groups it covers. So each entry is signed with an HMAC whose key is kept in localStorage, which workers can't reach. An entry that fails the check is ignored and downloaded again.

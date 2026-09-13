@@ -441,9 +441,39 @@ class BrowserTrackerContext(TrackerGameContext):
         logic_seconds = time.perf_counter() - started
         self.tracker_page.flush()
         self.flush_markers()
+        self.post_names()
         post({"type": "timing", "logic": round(logic_seconds, 4), "total": round(time.perf_counter() - started, 4),
               "items": len(self.items_received), "checked": len(self.checked_locations)})
         return result
+
+    def post_names(self):
+        """The names the page suggests while a command is typed, sent once per generated multiworld.
+
+        Each list is what that command matches against: the server's !hint and !hint_location take
+        names or groups, !getitem takes item names, and UT's /explain takes the generated world's
+        locations and regions.
+        """
+        multiworld = self.tracker_core.multiworld
+        player = self.tracker_core.player_id
+        if multiworld is None or player is None or getattr(self, "_names_sent_for", None) is multiworld:
+            return
+        world = self.tracker_core.get_current_world()
+        if world is None:
+            return
+        self._names_sent_for = multiworld
+        items = set(world.item_name_to_id)
+        locations = set(world.location_name_to_id)
+
+        def ordered(names):
+            return sorted(names, key=str.casefold)
+
+        post({
+            "type": "names",
+            "items": ordered(items),
+            "hint_items": ordered(items | set(world.item_name_groups)),
+            "hint_locations": ordered(locations | set(world.location_name_groups)),
+            "explain": ordered(set(multiworld.regions.location_cache[player]) | set(multiworld.regions.region_cache[player])),
+        })
 
     def load_coords(self, coords: dict, deferred_coords: dict, event_coords: dict, use_split: bool,
                     default_loc_size: int = 65):

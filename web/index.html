@@ -99,7 +99,12 @@
       <ul id="log-lines" class="lines"></ul>
     </section>
 
-    <input id="command" type="text" placeholder="/help, /explain &lt;location&gt;, or chat" autocomplete="off" disabled>
+    <div class="command-box">
+      <ul id="suggestions" class="suggestions" role="listbox" aria-label="Names" hidden></ul>
+      <input id="command" type="text" placeholder="/help, /explain &lt;location&gt;, or chat" autocomplete="off" disabled
+             role="combobox" aria-autocomplete="list" aria-controls="suggestions" aria-expanded="false"
+             title="After !hint, !hint_location, !getitem or /explain, Tab completes the highlighted name.">
+    </div>
   </main>
 
   <footer><span class="version">kalapana 0.1.0</span></footer>
