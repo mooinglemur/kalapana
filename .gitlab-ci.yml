@@ -27,7 +27,8 @@ check:
     - node --test 'test/*.test.mjs'
     - find server analyzer deploy web -name '*.mjs' -print0 | xargs -0 -n1 node --check
 
-image:
+# Not named `image`: a top-level key with a reserved name like that is read as the global keyword.
+kalapana-image:
   <<: *always
   stage: image
   image: quay.io/buildah/stable
