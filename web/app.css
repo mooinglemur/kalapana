@@ -201,7 +201,6 @@ label {
 
 input[type="text"],
 input[type="password"],
-input[type="search"],
 select {
   font: inherit;
   padding: 0.4rem 0.5rem;
@@ -391,7 +390,7 @@ button:disabled, input:disabled { opacity: 0.6; cursor: default; }
   gap: 0.5rem;
 }
 
-/* Puna's table filter box. */
+/* Puna's table filter box. Its search input keeps the browser's own styling, as on puna. */
 .table-controls {
   display: flex;
   flex-wrap: wrap;
