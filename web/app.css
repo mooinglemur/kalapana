@@ -1,0 +1,130 @@
+:root {
+  color-scheme: dark;
+  --bg: #16181d;
+  --panel: #1f232b;
+  --line: #2e3440;
+  --text: #e6e6e6;
+  --muted: #9aa3b2;
+  --error: #ff6b6b;
+}
+
+body {
+  margin: 0;
+  font: 14px/1.4 system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+header {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+form, #files {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+#files[hidden] {
+  display: none;
+}
+
+#files {
+  margin-top: 8px;
+}
+
+input, select, button {
+  font: inherit;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled, input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#status {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+#status.error {
+  color: var(--error);
+}
+
+nav {
+  display: flex;
+  gap: 4px;
+  padding: 6px 12px 0;
+}
+
+nav button {
+  border-bottom: none;
+}
+
+nav button[aria-selected="true"] {
+  background: var(--line);
+}
+
+main {
+  flex: 1;
+  overflow: auto;
+}
+
+section {
+  padding: 12px;
+}
+
+#labels {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 8px;
+}
+
+#tracker-lines, #log-lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: ui-monospace, monospace;
+}
+
+#log-lines li {
+  white-space: pre-wrap;
+}
+
+#log-lines li.ERROR {
+  color: var(--error);
+}
+
+#map-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+#map {
+  width: 100%;
+  max-height: calc(100vh - 220px);
+  background: #000;
+}
+
+#command {
+  margin: 0 12px 12px;
+  padding: 6px;
+}

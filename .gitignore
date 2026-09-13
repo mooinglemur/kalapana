@@ -1,1 +1,4 @@
 node_modules/
+# Pinned inputs from deploy/fetch-inputs.mjs, and a local server data directory.
+/vendor/
+/data/

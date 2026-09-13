@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Universal Tracker</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="app.css">
+  <script type="module" src="app.mjs"></script>
+</head>
+<body>
+  <header>
+    <form id="connect-form">
+      <label>Server <input id="address" required placeholder="mw.ionium.us:45012" autocomplete="off"></label>
+      <label>Slot <input id="slot" required size="14" autocomplete="off"></label>
+      <label>Password <input id="password" type="password" size="12" autocomplete="off"></label>
+      <button id="connect" type="submit" disabled>Connect</button>
+    </form>
+    <div id="files" hidden>
+      <label id="yaml-field" hidden>Player YAML <input id="yaml" type="file" accept=".yaml,.yml"></label>
+      <label id="pack-field" hidden>Poptracker pack (optional) <input id="pack" type="file" accept=".zip"></label>
+      <button id="start" type="button">Start tracking</button>
+    </div>
+    <p id="status" role="status">Loading catalog…</p>
+  </header>
+  <nav>
+    <button type="button" data-tab="tracker" aria-selected="true">Tracker</button>
+    <button type="button" data-tab="map">Map</button>
+    <button type="button" data-tab="log">Log</button>
+  </nav>
+  <main>
+    <section id="tab-tracker">
+      <div id="labels"></div>
+      <ul id="tracker-lines"></ul>
+    </section>
+    <section id="tab-map" hidden>
+      <div id="map-controls"><select id="map-select" aria-label="Map"></select><span id="current-map"></span></div>
+      <svg id="map" xmlns="http://www.w3.org/2000/svg"></svg>
+    </section>
+    <section id="tab-log" hidden>
+      <ul id="log-lines"></ul>
+    </section>
+  </main>
+  <input id="command" placeholder="/help, /explain &lt;location&gt;, or chat" autocomplete="off" disabled>
+</body>
+</html>

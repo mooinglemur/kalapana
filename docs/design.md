@@ -2,239 +2,190 @@
 
 Kalapana runs Archipelago's Universal Tracker (UT) in the browser at `ut.ionium.us`. Players open a link, and the tracker connects to their room with no install. Python runs in the browser via Pyodide (WebAssembly).
 
-This document proposes the architecture for the first production version. It builds on the spikes in `spikes/`, all of which passed in Node, headless Chrome 153 and Firefox 155. The live test ran against a pahoa room on `mw.ionium.us`.
+This document describes the architecture of the test instance. It builds on the spikes in `spikes/`, all of which passed in Node, headless Chrome 153 and Firefox 155. The live test ran against a pahoa room on `mw.ionium.us`. For operating details (configuration, endpoints, development), see the README.
 
 ## Summary
 
-- **No server-side application code.** The app is static files: an HTML/JS shell, the Pyodide runtime, Archipelago (AP) bundles, and a catalog. The browser connects straight to room servers over `wss://`.
-- **The container is a static file server.** It serves precompressed, content-hashed assets. Envoy terminates TLS in front of it.
-- **GitLab CI does the real work.** It builds trimmed, precompiled AP bundles from the AP version the curated index targets, plus one bundle per world version. It records each world's datapackage checksum, so the browser can pick the right bundle from the room's `RoomInfo` alone.
-- **Puna hands off with a URL fragment.** It passes the server address, slot and game in a link. During testing the room password rides along base64url-encoded. For launch it is fetched once from puna with a single-use token, so it never appears in a URL. See [Handoff from puna](#handoff-from-puna).
-- **Main security concern: arbitrary code on a same-site origin.** An uploaded apworld is arbitrary Python. On any `*.ionium.us` host it could send credentialed requests to `mw.ionium.us` and `ap-lobby.ionium.us`, which use `SameSite=Lax` cookies without CSRF tokens. Testing on `ut.ionium.us` therefore excludes uploaded apworlds, and full launch moves to a separate registrable domain. See [Isolation and cookies](#isolation-and-cookies).
+- **The browser does the tracking.** The page reads the room's datapackage checksums, loads the matching world bundle, and runs the unmodified `tracker.apworld` in a Web Worker. Game data never passes through kalapana's server.
+- **The server keeps a catalog of world bundles.** A small Node service (no npm dependencies) fetches the curated Archipelago-index at startup and when an admin POSTs `/admin/refresh`. It downloads every locked apworld version and analyzes each new one. It then publishes `catalog.json`, which maps each game and datapackage checksum to a precompiled bundle.
+- **Apworld analysis is sandboxed.** Analyzing an apworld means importing it, which runs arbitrary Python. Each import runs in a child Node process with Pyodide under Node's permission model: no network, no child processes, no environment, and file writes only in its own job directory.
+- **Several pods share one data directory.** CephFS in production. A renewable lease file ensures only one pod processes apworlds at a time; everything else is atomic writes.
+- **The image pins its inputs.** Archipelago (matching the index's `archipelago_version`), Pyodide, UT and a few wheels are all pinned by sha256. GitLab CI builds it with buildah, like puna.
 
 ## What the spikes established
 
 | Question | Result |
 |---|---|
 | Python runtime | Pyodide 0.29.x (Python 3.13). AP's `ModuleUpdate` rejects 3.14. |
-| UT compatibility | The unmodified `tracker.apworld` runs behind a small Kivy-free bridge (`spikes/lib/ui_bridge.py`). |
+| UT compatibility | The unmodified `tracker.apworld` runs behind a small Kivy-free bridge. |
 | Correctness | In-logic lists match desktop UT exactly: TUNIC 107/114, Stardew 21/10/32 during live play. |
-| Update latency | 2 to 6 ms per tracker update for both TUNIC and Stardew. |
-| Networking | The browser `WebSocket` shim works against pahoa over TLS. `ws://` falls back to `wss://`. |
-| Threads | Not available in Pyodide. An inline executor covers the one world that uses a thread pool at import. |
+| Update latency | 2 to 6 ms per tracker update for TUNIC and Stardew. |
+| Networking | A browser `WebSocket` shim works against pahoa over TLS. |
+| Threads | Not available in Pyodide. An inline executor covers the world that uses a thread pool at import. |
 | Persistence | IDBFS and OPFS both survive a full browser restart in Chrome and Firefox. |
-| Map tab | Poptracker packs render as an SVG overlay, matching desktop UT's colors. |
-| Pyodide packages needed | Only `pyyaml` and `orjson` for core. `ssl`, `bsdiff4` and `jellyfish` are replaced by stubs. |
-
-Bundle measurements (`spikes/06-bundle`), gzipped transfer sizes:
-
-| Piece | Source | Precompiled (.pyc) |
-|---|---|---|
-| Pyodide runtime (wasm, JS, stdlib) | 5.4 MB | 5.4 MB |
-| `pyyaml` + `orjson` wheels | 0.24 MB | 0.24 MB |
-| AP core bundle (modules, vendored wheels, stubs) | 0.67 MB | 1.22 MB |
-| TUNIC world | 0.13 MB | 0.26 MB |
-| Stardew Valley world | 0.35 MB | 0.75 MB |
-| Import time, TUNIC / Stardew | 0.72 s / 1.49 s | 0.43 s / 0.58 s |
-
-**Recommendation: ship precompiled bundles.** A cold visit costs about 1 MB more, and the HTTP cache absorbs that after the first load. Every page load after that imports up to a second faster. A first visit downloads roughly 7 to 8 MB. After that, only the bundles for a newly tracked world are fetched.
+| Packages | Core needs only `pyyaml`. `bsdiff4`, `jellyfish` and `ModuleUpdate` are replaced by stubs, and so is `ssl` unless a world uses `requests`, in which case Pyodide's real `ssl` is loaded. |
+| Bundles | Precompiled `.pyc` bundles cost about 1 MB more on a cold load but import up to a second faster. |
+| Sandbox | Under the analyzer's permissions, host reads, writes outside the job, processes, workers and network are all denied, even from code that reaches Node's `process`. |
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  puna["puna (mw.ionium.us)<br>room page"] -- "link with #fragment" --> shell
-  subgraph browser["Player's browser"]
-    shell["Shell page<br>ut.ionium.us"] -- "postMessage" --> runtime["Runtime worker<br>Pyodide + AP + UT"]
-    shell <--> storage[("OPFS library<br>YAMLs, packs, apworlds")]
+  index["Archipelago-index<br>(GitHub tarball)"] --> refresh
+  apworlds["apworld release URLs"] --> refresh
+  subgraph pod["kalapana pods"]
+    http["HTTP server"]
+    refresh["Refresh pipeline<br>(lease holder only)"] --> sandbox["Analyzer child process<br>Pyodide, no network"]
   end
-  shell -- "static assets" --> server["kalapana container<br>static file server"]
-  runtime -- "bundles" --> server
-  runtime -- "wss://" --> room["pahoa room<br>mw.ionium.us:PORT"]
+  refresh <--> data[("Shared data dir<br>CephFS")]
+  http <--> data
+  subgraph browser["Player's browser"]
+    page["Page"] -- "postMessage" --> worker["Worker<br>Pyodide + AP + UT"]
+  end
+  page -- "catalog, bundles" --> http
+  worker -- "runtime, bundles" --> http
+  page -- "probe wss://" --> room["pahoa room"]
+  worker -- "wss://" --> room
 ```
 
-### Components
+### Server
 
-1. **Shell page.** Plain HTML and JS with no npm or build step, following puna's approach. It handles:
-   - the connect form and parsing the handoff fragment;
-   - the file library (YAMLs, poptracker packs, uploaded apworlds);
-   - the tabs: Tracker, Map, Hints and Log;
-   - asking the browser for persistent storage (`navigator.storage.persist()` only works on the page, not in a worker).
-2. **Runtime worker.** A module Web Worker that loads Pyodide, unpacks the bundles, installs the bridge and runs UT. It exchanges JSON messages with the shell, as in `spikes/05-ui`.
-3. **Bridge (`ui_bridge.py`).** It stands in for the Kivy widgets UT touches: tracker list, header labels, map markers, map image and `ui` object. It forwards their updates to the shell. Production changes from the spike:
-   - send raw `JSONMessagePart` lists instead of AP's console text, which contains ANSI escapes, and render the colors in HTML;
-   - flatten nested message lists (the `/explain` crash);
-   - add the hints tab with UT's "In Logic" column, command autocomplete, map groups and location icons.
-4. **Catalog and bundles.** Static files built by CI; see [Build pipeline](#build-pipeline).
+- **HTTP** (`server/http.mjs`) serves:
+  - the web app;
+  - the vendored Pyodide runtime at `/runtime/pyodide-<version>/`;
+  - core and world bundles at `/bundles/...`, named by content key and immutable;
+  - `catalog.json`;
+  - health endpoints and the admin endpoints.
 
-### Session flow
+  Text assets are compressed with brotli or gzip on first request and cached in memory. Zips are served as-is.
+- **Refresh pipeline** (`server/refresh.mjs`). Any pod can request a refresh; it leaves a request file in the data directory. The pod holding the lease processes requests until none remain:
+  1. **Core bundle:** build it if the current key has none. The key covers the pinned inputs and kalapana's runtime and analyzer code.
+  2. **Tracker:** analyze the pinned `tracker.apworld`.
+  3. **Index:** download the tarball and parse it in the sandbox with `tomllib`. Refuse to continue if its `archipelago_version` differs from the image's.
+  4. **Resolve versions** with the lobby's rules: skip disabled worlds, take supported worlds from the AP source, and map each version to a `local` file, its own `url`, or `default_url` with `{{version}}` substituted.
+  5. **Download** anything missing, verifying the sha256 from `index.lock` when present. Store files as `apworlds/<sha256>.apworld`.
+  6. **Analyze** every apworld without a cached result.
+  7. **Publish** `catalog.json` and `last-refresh.json`, the summary with failures.
+- **Analyzer** (`server/sandbox.mjs`, `analyzer/`). Each task is a child `node --permission` process running Pyodide:
+  - **`build_core`** builds `core.zip` (precompiled) and `core-src.zip` (sources, for the analyzer), then smoke-tests importing `worlds`, `CommonClient` and `Generate`.
+  - **`analyze_world`** imports one world alone. It records every registered game's datapackage checksum, whether UT needs a YAML (`ut_can_gen_without_yaml`), whether UT is disabled, whether the map needs an external poptracker pack, and which Pyodide packages the world imported. It then writes a reproducible precompiled bundle.
+- **Caching.** Completed analyses, including failures, are cached under a key that combines the apworld sha256 with a hash of the analyzer's context: the pinned inputs, the analyzer tasks and the stubs it imports. Crashes and timeouts aren't cached, so they are retried. Changing the analyzer therefore retries earlier failures, and bundle URLs change with it. Changing browser-only modules (the bridge and the WebSocket shim) rebuilds only the core bundle.
 
-1. **Open.** The shell reads the handoff fragment (`server`, `slot`, optional `game`), or the player fills in the form.
-2. **Probe.** The shell opens a short-lived `wss://` connection and reads `RoomInfo`: `generator_version`, `games` and `datapackage_checksums`. If `game` wasn't provided and the room has more than one game, it sends a `Connect` with the `Tracker` tag to learn the slot's game from `Connected.slot_info`, then disconnects.
-3. **Resolve.** The shell looks up the runtime version and the world bundle in `catalog.json` by the game's datapackage checksum. The catalog also says whether the world needs a YAML (it lacks `ut_can_gen_without_yaml`), whether it has a map tab that needs an external poptracker pack, and which extra Pyodide packages it needs.
-4. **Collect files.** Anything required is asked for now: a YAML, or optionally a pack, from the library or an upload. UT requests files synchronously while it handles packets, so they must already be in place before connecting.
-5. **Boot.** The worker loads Pyodide, the core bundle, the world bundle, UT and the files, then runs UT's context with the bridge.
-6. **Connect.** UT connects and tracks. Everything after this point happens in UT; the shell only renders.
+### Browser
 
-A room that no catalog entry matches still boots. The shell offers "upload the apworld for this game", with a warning that uploaded code is untrusted. If the checksum still doesn't match, UT reports it as it does on desktop.
+- **Page** (`web/app.mjs`):
+  1. Load `catalog.json`.
+  2. On Connect, open a short `wss://` probe and read `RoomInfo`. If the room has more than one game, send a tracker `Connect` to learn the slot's game from `Connected.slot_info`. A refused slot or password is reported here.
+  3. Choose the newest catalog entry whose checksum matches the room's checksum for that game.
+  4. If the entry needs a YAML, require one; if its map needs an external pack, offer an optional upload.
+  5. Start the worker.
+- **Worker** (`web/worker.mjs`):
+  1. Load Pyodide from kalapana and the packages the entries list.
+  2. Unpack the core, tracker and world bundles at `/`, and place the uploaded files.
+  3. Run `kalapana_boot.prepare()` and install the WebSocket shim.
+  4. Start the bridge and connect UT.
+- **Bridge** (`runtime/ui_bridge.py`). It stands in for the Kivy widgets UT touches: tracker list, header labels, map markers and images, and the `ui` object. It sends their updates to the page:
+  - server text as Kivy-style `[color=hex]` markup, not ANSI escapes;
+  - nested message lists from `/explain` flattened;
+  - the startup generation skipped when no YAML was supplied, since UT regenerates YAML-less worlds on connect.
 
-## Build pipeline
-
-GitLab CI in the same style as puna and the lobby: buildah, `:sha-<short>` tags, `:latest` from `main`, `:dev` from `ionium-dev`, and no deploy job.
-
-**Pinned inputs**
-- **AP source:** the tag named by the index's `archipelago_version` (currently 0.6.7). A rebuild follows the index.
-- **Archipelago-index:** a commit, with `index.lock` providing the sha256 for each world version.
-- **UT:** a `tracker.apworld` release URL plus sha256, pinned per AP version. It isn't in the index today; see open decision 3.
-- **Pyodide:** a release (0.29.x) plus the sha256 of each file we host.
-
-**Stages**
-1. **fetch.** Download Pyodide's dist files and the few wheels we serve. Download each world version the build policy selects, verified against `index.lock`. Most index URLs are GitHub release assets, which CI can fetch but browsers can't (no CORS), so CI mirrors them.
-2. **catalog.** In a Python 3.13 image with the AP source, import each world version natively and record:
-   - its datapackage checksum and game name;
-   - whether it sets `ut_can_gen_without_yaml` and has a `tracker_world` with an `external_pack_key`;
-   - whether it imports anything Pyodide lacks (a native dependency, which marks it unsupported);
-   - the extra Pyodide packages it needs (for example `requests` for four worlds, or `setuptools` for pokemon_emerald).
-   Core worlds come from the AP source tree the same way.
-3. **bundle.** Build the precompiled core bundle and one precompiled bundle per world version. This is `spikes/06-bundle/build_bundles.py`, extended to apworld inputs. Name every file by content hash and precompress it with brotli and gzip.
-4. **image.** Stage the static tree, `catalog.json` and the shell into the image. Build and push with buildah.
-
-**Which world versions to build** is a policy choice (open decision 2). Each version bundle is typically 0.1 to 1 MB, with outliers up to about 14 MB for asset-heavy manual worlds. Building every locked version is simplest. Building only versions a live room could use is smaller but needs input from the lobby or puna.
-
-**Published layout**
+### Shared data directory
 
 ```
-/                          shell (index.html, app.js, app.css), no-cache
-/catalog.json              runtime versions, checksum -> world bundle, flags; short cache
-/runtime/pyodide-0.29.x/   Pyodide dist files and wheels; immutable
-/ap/0.6.7/core.<hash>.zip  precompiled AP core + stubs + vendored pure wheels; immutable
-/ap/0.6.7/tracker.<hash>.zip
-/worlds/<world>/<version>.<hash>.zip
-/healthz                   static file for probes
+catalog.json                  published catalog
+last-refresh.json             summary of the last published refresh, including failures
+refresh.lease                 lease file (owner, expiry)
+refresh-requested.json        pending refresh request
+apworlds/<sha256>.apworld     downloads
+apworlds/unlocked-downloads.json   URL -> sha256 for versions index.lock doesn't cover
+core-v1/<key>/                core.zip, core-src.zip, result.json
+analysis-v1/<key>/            bundle.zip, result.json (key = hash of analyzer context and apworld sha256)
 ```
 
-## Container and serving
+**Locking.** The lease is created with `link()`, which is atomic and never exposes a half-written file, and renewed every 30 seconds with a 90-second expiry. An expired lease is taken over by renaming it aside. The contender checks it moved the stale lease it read, and puts a live lease back if not. A holder that finds someone else's owner id stops processing. Published files and directories are written under temporary names and renamed into place.
 
-- **Server:** a prebuilt static file server, so no application code. Recommendation: `static-web-server` (a single Rust binary). It serves precompressed `.br`/`.gz` variants, sets cache headers per path and runs non-root. The image can be `scratch` or `debian:13-slim` like puna's. nginx with `gzip_static` works too if you'd rather use something familiar.
-- **Behind Envoy:** Envoy terminates TLS for `ut.ionium.us` and forwards plain HTTP to the pod. Envoy should not recompress the precompressed files.
-- **Headers**
-  - `Cache-Control: public, max-age=31536000, immutable` for hashed assets, `no-cache` for `index.html` and `catalog.json`.
-  - `Content-Type: application/wasm` for `.wasm` (needed for streaming compilation).
-  - `Content-Security-Policy`:
-    - `script-src 'self' 'wasm-unsafe-eval'` (Pyodide needs wasm compilation);
-    - `worker-src 'self'`;
-    - `connect-src 'self' wss:` (rooms can be on any port or host);
-    - `img-src 'self' blob: data:`;
-    - `frame-ancestors 'none'`.
-  - `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`.
-  - COOP/COEP are not needed: we don't use `SharedArrayBuffer` or threads.
-- **Health:** `GET /healthz` returns a static file.
-- **Resources:** static serving is tiny. Most of the image is world bundles.
+## Catalog
 
-**Is server-side code needed?** Not for the first version:
-- rooms are reached directly over `wss://`;
-- the catalog is built ahead of time;
-- the handoff is a URL fragment;
-- the player's files stay in their browser.
+```json
+{
+  "schema": 1,
+  "archipelagoVersion": "0.6.7",
+  "pyodide": { "version": "0.29.4", "base": "/runtime/pyodide-0.29.4/" },
+  "core": { "bundle": "/bundles/core/<key>.zip", "packages": ["pyyaml"] },
+  "tracker": { "version": "0.3.3", "bundle": "/bundles/worlds/<key>.zip", "packages": ["pyyaml"] },
+  "games": {
+    "TUNIC": [
+      { "module": "tunic", "version": "0.6.7", "source": "core", "checksum": "c2cfbd...",
+        "bundle": "/bundles/worlds/<key>.zip", "packages": ["pyyaml"], "needsYaml": false,
+        "disableUt": false, "map": { "externalPack": true, "internalPack": false } }
+    ]
+  }
+}
+```
 
-Two things would need a server later. Neither is required for puna rooms:
-- **A `ws://`-to-`wss://` relay**, for third-party rooms without TLS. An https page can't open plain `ws://` connections. Pahoa rooms are always TLS.
-- **An upload proxy or mirror** for apworlds that aren't in the index, if we ever want to fetch them by URL instead of asking the player to upload.
+**Checksum ambiguity.** Entries are sorted newest first. A datapackage checksum only covers item and location names and ids, so versions that changed logic without renaming anything share a checksum (ANIMAL WELL 0.5.0 and 0.5.2 do). The browser takes the newest match. That may not be the version the room generated with; the room's apworld version isn't available anywhere the browser can see.
+
+## Container and deployment
+
+- **Image.** `deploy/Dockerfile` has two stages:
+  1. `node:26-trixie-slim` runs `deploy/fetch-inputs.mjs`, which downloads and verifies `deploy/inputs.json`;
+  2. `node:26-trixie-slim` with the vendored inputs and kalapana's code, running as `node` (158 MB locally).
+
+  Node 26 is required for the permission model's `--allow-net`.
+- **CI.** `.gitlab-ci.yml` runs `node --test` and syntax checks, then buildah with `:sha-<short>` on every branch, `:latest` on `main` and `:dev` on `ionium-dev`. No deploy job.
+- **Kubernetes.** Manifests live outside the repo, as with puna. The pod needs:
+  - `/data` on the shared RWX volume;
+  - the admin token from a Secret (`KALAPANA_ADMIN_TOKEN_FILE`);
+  - `/healthz` for liveness and `/readyz` for readiness;
+  - egress to GitHub for the index and apworld downloads.
+
+  Envoy terminates TLS.
+- **Resources.** Each analyzer process peaks at a few hundred MB, so `KALAPANA_ANALYZER_CONCURRENCY` should follow the pod's memory limit. Once the cache is warm, only new index versions are processed.
+- **Headers.** HTML gets a Content Security Policy:
+  - `script-src 'self' 'wasm-unsafe-eval'`;
+  - `connect-src 'self' wss: ws:`;
+  - `img-src 'self' blob: data:`;
+  - `frame-ancestors 'none'`.
+
+  Every response gets `nosniff`, `no-referrer` and `Cross-Origin-Resource-Policy: same-origin`. Runtime and bundle files are `immutable`; the app and catalog are `no-cache` with ETags.
 
 ## Handoff from puna
 
-Puna's room page gets a "Track in browser" link per slot. Everything travels in the URL **fragment**: it is never sent to any server, doesn't appear in Envoy logs, and isn't included in `Referer` headers. The shell reads the fragment, then removes it from the address bar with `history.replaceState` so it isn't copied along with the URL.
+Deferred. The agreed direction:
+- **Link.** A per-slot "Track in browser" link on puna's room page, with the server, slot and game in the URL fragment. The page reads it and strips it with `history.replaceState`.
+- **Password, testing.** Base64url-encoded in the fragment. This only prevents casual reading.
+- **Password, launch.** A single-use handoff token of about 60 seconds, redeemed with one cookie-less CORS request to puna, so the password never appears in a URL.
+- **Known hosts.** The page auto-connects only to known room hosts, and asks before connecting anywhere else.
 
-The fields that aren't secret:
-- `v`: handoff format version.
-- `server`: host and port (always `wss://` for pahoa rooms).
-- `slot`: the player name.
-- `game`: optional; it skips the second probe connection when the room has several games.
-
-The room password is the only secret, and it is handled in two phases.
-
-### Testing: base64url fragment
-
-```
-https://ut.ionium.us/#h=eyJ2IjoxLCJzZXJ2ZXIiOiJtdy5pb25pdW0udXM6NDUwMTIiLCJzbG90IjoiVHVuZXIiLCJwYXNzd29yZCI6Ii4uLiJ9
-```
-
-`h` is base64url-encoded JSON containing the fields above plus an optional `password`. The encoding only prevents casual reading, for example over a shoulder or in a screenshot. Anything with the URL can decode it: history, sync, a link pasted into chat, extensions. It is acceptable while testing, not for launch. Puna includes the password only when its patch policy would already reveal it to this user (the `wss://slot:pass@host:port` patch format).
-
-### Launch: single-use handoff token
-
-The password never appears in any URL:
-
-1. Puna's link carries the non-secret fields plus `token`: a random, single-use value that expires after about 60 seconds. Puna stores it with the room and slot.
-2. The shell sends `POST https://mw.ionium.us/api/handoff/redeem` with the token, `credentials: "omit"` and no cookies.
-3. Puna returns `{server, slot, game, password}` and marks the token used. The endpoint allows CORS only from kalapana's origin.
-4. The shell connects. A leaked or copied link is useless after one use or once it expires.
-
-This keeps kalapana fully static and holds no secret shared with puna. The redemption endpoint isn't a CSRF risk: it uses no cookies, and its only side effect is consuming the token.
-
-We considered a signed or encrypted redirect through kalapana server code. It was rejected because the redirect still ends in a URL containing the password, and it would add server code plus a secret shared between puna and kalapana.
-
-### Other handoff rules
-
-- **Known hosts only:** the shell auto-connects only to known room hosts (`mw.ionium.us`, `mw.ionium-dev.us`). A handoff naming any other server needs confirmation first, so a crafted link can't silently point the tracker at an attacker's server.
-- **Link attributes:** puna links with `rel="noopener noreferrer"`.
-- **No shared session:** kalapana never uses puna's cookies or login session.
-- **YAMLs:** per-slot YAMLs aren't stored in puna. If the lobby later offers them, it would be through a separate single-use or capability URL with CORS, not a login session.
-
-Puna needs the per-slot link and, for launch, the token table and redeem endpoint. That's a `HANDOFF.md` for puna once this design is approved.
+Until then, the page accepts `?address=&slot=` in the query string. It never accepts a password there.
 
 ## Isolation and cookies
 
-**What's already safe.** Puna's `punasession` and the lobby's `session` cookies are host-only (no `Domain` attribute). The browser never sends them to `ut.ionium.us`, so nothing on kalapana's side can read them.
-
-**The gap.** `ut.ionium.us`, `mw.ionium.us` and `ap-lobby.ionium.us` share the registrable domain `ionium.us`, so they are the same site. Any script running on `ut.ionium.us` can send `fetch("https://mw.ionium.us/...", {method: "POST", credentials: "include"})`, and the browser attaches the Lax cookies. The script can't read the response without CORS, but the action still happens. Puna and the lobby rely on `SameSite=Lax` for CSRF protection and don't check `Origin` or `Sec-Fetch-Site`. Kalapana would run arbitrary Python on that origin as soon as it accepts uploaded apworlds.
-
-Browsers draw these boundaries at the site (scheme plus registrable domain), not the hostname. So a different subdomain of `ionium.us` doesn't help:
-- `SameSite` cookies are attached to requests between any `*.ionium.us` hosts.
-- Code on any subdomain can set `Domain=ionium.us` cookies that reach puna and the lobby ("cookie tossing").
-- Chrome's per-site process isolation may put same-site subdomains in one process.
-
-**Plan**
-1. **Testing on `ut.ionium.us`.** Ship without uploaded apworlds. Curated index worlds, core worlds and UT are the only code that runs. YAMLs and poptracker packs are data, not code.
-2. **Puna and the lobby reject state-changing requests that aren't from their own origin.** Reject a POST, PUT, PATCH or DELETE unless `Sec-Fetch-Site` is `same-origin` (or `none`), falling back to an `Origin` check. A request from another `ionium.us` subdomain arrives as `same-site` and is refused. This is a small guard in each app, worth doing regardless of kalapana.
-3. **Full launch on a separate registrable domain.** Kalapana moves to its own domain before launch. Requests from it to `ionium.us` are cross-site, so `SameSite=Lax` cookies are withheld even from an app that lacks the guard. It also can't toss `ionium.us` cookies. Uploaded apworlds can be enabled from this point. The shell and runtime share the new origin, so no iframe split is needed.
-4. **Handoff origin.** Puna's link target, the redeem endpoint's CORS allowlist and kalapana's known-hosts list move with the domain change. Library storage is per origin and doesn't carry over from `ut.ionium.us`; that's acceptable for data created during testing.
-
-## Storage
-
-- **Library.** The player's YAMLs, poptracker packs and (later) uploaded apworlds live in OPFS, mounted into Pyodide with `mountNativeFS`. IDBFS is the fallback if a browser lacks the OPFS features Pyodide needs.
-- **Persistent storage.** The shell asks for it at first upload. The spikes measured quotas of about 10 GB (Chrome) and 4.8 GB (Firefox).
-- **Export and import** of the whole library as a zip, because Safari can evict storage.
-- **UT state.** UT's per-seed data (ignored locations, manual items) and `host.yaml` options persist in the same storage.
-- **Cache.** Bundles are not stored in the library; the HTTP cache handles them.
-
-## Versions
-
-- **Runtime version.** Each runtime is keyed by AP version and built from the index's `archipelago_version`. `catalog.json` lists every runtime still served and maps a room's `generator_version` to the best one. After an index bump, keep the previous runtime for a while so long-running rooms keep working.
-- **UT version.** UT is pinned per AP version and checked against its `minimum_ap_version`.
-- **World versions.** These are resolved by datapackage checksum, never by guessing from the room.
+- **Same-site risk.** Browsers draw cookie boundaries at the site (scheme plus registrable domain). Every `*.ionium.us` host is the same site as puna (`mw.ionium.us`) and the lobby (`ap-lobby.ionium.us`), and both rely on `SameSite=Lax` cookies without CSRF tokens.
+- **Testing.** The test instance runs on `ut.ionium.us` and executes only curated index worlds, core worlds and UT. There are no uploaded apworlds, and YAMLs and poptracker packs are data.
+- **Guard.** Recommended for puna and the lobby regardless: reject state-changing requests unless `Sec-Fetch-Site` is `same-origin` (or `none`), with an `Origin` fallback.
+- **Full launch.** Kalapana moves to a separate registrable domain, which also blocks cookie tossing. Only then are uploaded apworlds allowed.
+- **Server side.** Index apworlds run only inside the analyzer sandbox. The server process itself never imports them.
 
 ## Known limitations
 
-- **Native dependencies.** Worlds that need native packages can't be tracked (for example soe `pyevermizer`, zillion, kh2, tww, jak). The catalog marks them unsupported.
-- **Rooms without TLS** can't be reached until a relay exists.
-- **Safari** is untested: storage eviction and OPFS behavior need checking on a Mac or iOS device.
-- **Poptracker packs** are supplied by the player (upload or library). Packs contain game art, so kalapana doesn't host them.
-- **Randomized YAML options.** UT's own limitation still applies: a YAML with randomized options gives wrong logic unless the player sets the rolled values.
+- **Native dependencies.** Worlds needing native packages fail analysis and don't appear in the catalog (for example soe, which the index also disables).
+- **Rooms without TLS** can't be reached from an https page.
+- **No saved library yet.** The test instance doesn't keep uploaded YAMLs and packs between visits. OPFS persistence was proven in the spikes but isn't wired in.
+- **Missing UI.** No hints tab, command autocomplete, map groups or location icons yet.
+- **Safari** is untested.
+- **Randomized YAML options.** UT's own limitation still applies: they need the rolled values filled in.
 
 ## Open decisions
 
-1. **World version build policy:** build every locked version in `index.lock`, the latest N per world, or only versions the lobby's room manifests reference?
-2. **UT distribution:** add `tracker.apworld` to Archipelago-index (with a lock hash), or pin it in kalapana's CI?
-3. **Handoff token details:** token lifetime (60 seconds proposed), and whether redeeming requires the room to be running.
-4. **Guard in puna and lobby:** approve the `Sec-Fetch-Site` check as HANDOFFs to both repos?
-
-Decided: test on `ut.ionium.us` without uploaded apworlds, and move to a separate registrable domain before full launch. The password travels as a base64url fragment during testing and by single-use token for launch.
+1. **Handoff token details.** Token lifetime, and whether redeeming requires the room to be running.
+2. **Guard.** Approve the `Sec-Fetch-Site` check as HANDOFFs to puna and the lobby?
+3. **UT pinning.** Keep `tracker.apworld` pinned in `deploy/inputs.json`, or add it to Archipelago-index?
 
 ## Milestones
 
-1. **Build pipeline:** core and world bundles from AP 0.6.7 and the index, `catalog.json`, container image and CI. Verify TUNIC and Stardew against a pahoa room.
-2. **Shell and runtime:** connect flow, probe and resolve, library with OPFS, Tracker/Map/Hints/Log tabs, JSON message rendering. Harden the bridge.
-3. **Puna handoff (testing):** the per-slot link with the base64url fragment, plus the request guards in puna and the lobby.
-4. **Launch:** move to the separate domain, add the single-use handoff token, enable uploaded apworlds, library export/import, and a Safari pass.
-5. **Later:** a relay if third-party `ws://` rooms matter.
+1. **Test instance** (this). Server refresh and sandboxed analysis, catalog, browser client, image and CI. Verified end to end locally against AP 0.6.7 rooms for TUNIC (with map) and Stardew (with YAML), and in the container.
+2. **Deploy to `ut.ionium.us`** on the shared volume. Test against a live pahoa room.
+3. **Client polish:** persistent library, hints tab, autocomplete, map groups and icons.
+4. **Puna handoff:** link, guard, then token.
+5. **Launch:** separate domain, uploaded apworlds, Safari pass.

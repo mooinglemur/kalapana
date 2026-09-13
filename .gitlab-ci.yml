@@ -1,0 +1,66 @@
+# Every branch pushes :sha-<short sha>; main also moves :latest and ionium-dev moves :dev.
+# Deployments pin sha- tags, as with puna.
+workflow:
+  rules:
+    - if: '$CI_SERVER_HOST == "git.mooinglemur.com"'
+
+stages:
+  - check
+  - image
+
+.always: &always
+  rules:
+    # Not on a schedule, so a scheduled pipeline never re-pushes a moving tag for an unchanged commit.
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+check:
+  <<: *always
+  stage: check
+  image: docker.io/library/node:26-trixie-slim
+  tags:
+    - linux
+    - k8s
+  script:
+    - node --test 'test/*.test.mjs'
+    - find server analyzer deploy web -name '*.mjs' -print0 | xargs -0 -n1 node --check
+
+image:
+  <<: *always
+  stage: image
+  image: quay.io/buildah/stable
+  tags:
+    - linux
+    - k8s
+  variables:
+    CONTAINERS_STORAGE_CONF: /tmp/storage.conf
+  before_script:
+    # Native kernel overlay without fuse-overlayfs, which needs CAP_SYS_ADMIN this runner tier lacks.
+    # Same workaround as puna's and the lobby's pipelines.
+    - |
+      cat > "$CONTAINERS_STORAGE_CONF" <<'CONF'
+      [storage]
+      driver = "overlay"
+      runroot = "/var/run/containers/storage"
+      graphroot = "/var/lib/containers/storage"
+      [storage.options.overlay]
+      mountopt = "nodev"
+      CONF
+    - buildah info
+    - echo "$CI_REGISTRY_PASSWORD" | buildah login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - IMAGE="$CI_REGISTRY_IMAGE/kalapana"
+    - buildah build -f deploy/Dockerfile -t "$IMAGE:sha-$CI_COMMIT_SHORT_SHA" .
+    - buildah push "$IMAGE:sha-$CI_COMMIT_SHORT_SHA"
+    - |
+      case "$CI_COMMIT_BRANCH" in
+        main)        MOVING_TAG=latest ;;
+        ionium-dev)  MOVING_TAG=dev ;;
+        *)           MOVING_TAG= ;;
+      esac
+      if [ -n "$MOVING_TAG" ]; then
+        buildah tag "$IMAGE:sha-$CI_COMMIT_SHORT_SHA" "$IMAGE:$MOVING_TAG"
+        buildah push "$IMAGE:$MOVING_TAG"
+      fi

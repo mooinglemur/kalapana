@@ -1,0 +1,8 @@
+.git
+vendor
+data
+spikes
+docs
+test
+**/node_modules
+**/__pycache__

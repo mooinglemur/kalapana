@@ -1,0 +1,45 @@
+{
+  "archipelago": {
+    "version": "0.6.7",
+    "url": "https://codeload.github.com/ArchipelagoMW/Archipelago/tar.gz/refs/tags/0.6.7",
+    "sha256": "5310385792dced7efe74ae124a49cc0ded0adfa5a1c1daa0a5f0cc7dbc4bbd4e"
+  },
+  "pyodide": {
+    "version": "0.29.4",
+    "url": "https://github.com/pyodide/pyodide/releases/download/0.29.4/pyodide-core-0.29.4.tar.bz2",
+    "sha256": "5304510cb0e4b5cfce57b410451c3fd2fba96177e3d0b8a31da9ad7a0620bff6",
+    "packageBaseUrl": "https://cdn.jsdelivr.net/pyodide/v0.29.4/full/",
+    "packages": ["pyyaml", "orjson", "requests", "ssl", "setuptools", "jinja2", "attrs", "docutils"]
+  },
+  "tracker": {
+    "version": "0.3.3",
+    "url": "https://github.com/FarisTheAncient/Archipelago/releases/download/Tracker_v0.3.3/tracker.apworld",
+    "sha256": "a909f96404b0009865d39b87cec8bb749446783577d77bd4fa14431cef0c2140"
+  },
+  "wheels": [
+    {
+      "url": "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl",
+      "sha256": "4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"
+    },
+    {
+      "url": "https://files.pythonhosted.org/packages/56/27/96a5cd2626d11c8280656c6c71d8ab50fe006490ef9971ccd154e0c42cd2/websockets-13.1-py3-none-any.whl",
+      "sha256": "a9a396a6ad26130cdae92ae10c36af09d9bfe6cafe69670fd3b6da9b07b4044f"
+    },
+    {
+      "url": "https://files.pythonhosted.org/packages/c9/75/aad85817266ac5285c93391711d231ca63e9ae7d42cd3ca37549e24ebe52/schema-0.7.8-py2.py3-none-any.whl",
+      "sha256": "00bd977fadc7d9521bf289850cd8a8aa5f4948f575476b8daaa5c1b57af2dce1"
+    },
+    {
+      "url": "https://files.pythonhosted.org/packages/63/d7/97f7e3a6abb67d8080dd406fd4df842c2be0efaf712d1c899c32a075027c/platformdirs-4.9.4-py3-none-any.whl",
+      "sha256": "68a9a4619a666ea6439f2ff250c12a853cd1cbd5158d258bd824a7df6be2f868"
+    },
+    {
+      "url": "https://files.pythonhosted.org/packages/18/67/36e9267722cc04a6b9f15c7f3441c2363321a3ea07da7ae0c0707beb2a9c/typing_extensions-4.15.0-py3-none-any.whl",
+      "sha256": "f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548"
+    },
+    {
+      "url": "https://files.pythonhosted.org/packages/ef/3c/2c197d226f9ea224a9ab8d197933f9da0ae0aac5b6e0f884e2b8d9c8e9f7/pathspec-1.0.4-py3-none-any.whl",
+      "sha256": "fb6ae2fd4e7c921a165808a552060e722767cfa526f99ca5156ed2ce45a5c723"
+    }
+  ]
+}
