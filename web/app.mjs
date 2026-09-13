@@ -91,7 +91,7 @@ function renderRecent() {
     const button = document.createElement("button");
     button.type = "button";
     const title = document.createElement("span");
-    title.textContent = `${entry.slot} on ${entry.address}`;
+    title.textContent = `${entry.slot} on ${hidePorts(entry.address)}`;
     const detail = document.createElement("span");
     detail.className = "hint";
     detail.textContent = [entry.game, ago(entry.at)].filter(Boolean).join(" · ");
@@ -120,6 +120,7 @@ const STREAMER_KEY = "kalapana.streamer";
 let streamerMode = loadStored(STREAMER_KEY, false) === true;
 let serverAddress = "";
 
+// Best effort: masks anything shaped like host:port.
 function hidePorts(text) {
   return streamerMode ? text.replace(/([\w\-.\]]):\d{1,5}(?!\d)/g, "$1:•••••") : text;
 }
@@ -170,15 +171,21 @@ function renderMarkup(target, text) {
   target.append(unescapeMarkup(text.slice(last)));
 }
 
-function addLog(level, { text, markup }) {
-  ui.logs.push({ level, text: text ?? unescapeMarkup(markup.replace(/\[\/?color[^\]]*\]/g, "")) });
-  const lines = $("log-lines");
-  const atBottom = lines.scrollHeight - lines.scrollTop - lines.clientHeight < 40;
+// Lines are kept as received and masked when drawn, so turning streamer mode on or off can redraw them.
+function logLine({ level, text, markup }) {
   const li = document.createElement("li");
   li.className = level;
-  if (markup !== undefined) renderMarkup(li, markup);
-  else li.textContent = text;
-  lines.append(li);
+  if (markup !== undefined) renderMarkup(li, hidePorts(markup));
+  else li.textContent = hidePorts(text);
+  return li;
+}
+
+function addLog(level, { text, markup }) {
+  const entry = { level, text: text ?? unescapeMarkup(markup.replace(/\[\/?color[^\]]*\]/g, "")), markup };
+  ui.logs.push(entry);
+  const lines = $("log-lines");
+  const atBottom = lines.scrollHeight - lines.scrollTop - lines.clientHeight < 40;
+  lines.append(logLine(entry));
   if (atBottom) lines.scrollTop = lines.scrollHeight;
 }
 
@@ -553,6 +560,8 @@ $("streamer").addEventListener("change", (event) => {
   store(STREAMER_KEY, streamerMode);
   showAddress();
   $("message").textContent = hidePorts(ui.connection.text);
+  renderRecent();
+  $("log-lines").replaceChildren(...ui.logs.map(logLine));
 });
 $("connect-form").addEventListener("submit", onSubmit);
 for (const id of ["address", "slot", "password"]) {

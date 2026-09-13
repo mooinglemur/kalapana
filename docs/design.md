@@ -84,7 +84,7 @@ flowchart LR
 
   While a tracker runs, Connect becomes Disconnect. Disconnecting terminates the worker, so no Python state, uploaded file or map image carries over to the next room, slot or game, and the next Connect boots a fresh worker (about 2 seconds with the runtime cached). Picking a different Recent entry while tracking disconnects and connects to it; while idle it only fills the fields. A room check still in flight is ignored if the details change before it answers.
 
-  The gear menu has one saved option, streamer mode. It hides the room's port in the address field (except while the field is being edited) and in the status line. The log and the Recent menu still show it. `spikes/07-kalapana/switch.mjs` checks this.
+  The gear menu has one saved option, streamer mode. It hides the room's port in the address field (except while the field is being edited), the status line and the Recent menu. The log is masked on a best-effort basis: anything shaped like `host:port`. `spikes/07-kalapana/switch.mjs` checks this.
 - **Worker** (`web/worker.mjs`):
   1. Load Pyodide from kalapana and the packages the entries list.
   2. Unpack the core, tracker and world bundles at `/`, and place the uploaded files.

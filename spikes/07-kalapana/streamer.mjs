@@ -66,6 +66,11 @@ try {
   const text = await message();
   check(text.includes(masked) && !text.includes(port), "status line hides the port", text);
   check((await field()) === masked, "field stays hidden while tracking");
+  const rawLogs = await page.evaluate(() => window.kalapanaState.logs.map((line) => line.text).join("\n"));
+  const shownLogs = await page.$eval("#log-lines", (node) => node.textContent);
+  check(rawLogs.includes(port) && !shownLogs.includes(port) && shownLogs.includes("•••••"), "log hides the port");
+  const recentText = await page.$eval("#recent-list", (node) => node.textContent);
+  check(recentText.includes(masked) && !recentText.includes(port), "Recent hides the port", recentText);
   await page.screenshot({ path: `${shotDir}/streamer-connected.png` });
 
   await page.reload();
@@ -77,6 +82,7 @@ try {
   await page.click("#streamer");
   await clickBlank();
   check((await field()) === address, "port shown after turning it off");
+  check((await page.$eval("#recent-list", (node) => node.textContent)).includes(address), "Recent shows the port after turning it off");
 } catch (err) {
   say("FAILED:", err.message);
   exitCode = 1;
