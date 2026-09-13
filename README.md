@@ -27,7 +27,7 @@ only serves files and keeps a catalog of apworld bundles built from the curated
 |---|---|---|
 | `KALAPANA_DATA_DIR` | `/data` in the image | Shared data directory (catalog, apworlds, bundles, lease). Shared by all pods. |
 | `KALAPANA_WORK_DIR` | OS temp dir | Per-pod scratch space for analyzer jobs. |
-| `KALAPANA_PORT` / `KALAPANA_HOST` | `8080` / `::` | Listen address. |
+| `KALAPANA_PORT` / `KALAPANA_HOST` | `8080` / `::` | Listen address. A non-integer port, such as the `tcp://...` value Kubernetes injects for a Service named `kalapana`, is ignored with a warning. Invalid values for the other numeric settings stop startup with an error naming the variable. |
 | `KALAPANA_ADMIN_TOKEN` or `KALAPANA_ADMIN_TOKEN_FILE` | unset | Bearer token for `/admin/*`. Admin endpoints are disabled without one. |
 | `KALAPANA_INDEX_URL` | `main` tarball of ionium-ap/Archipelago-index | Where to fetch the index. |
 | `KALAPANA_INDEX_PATH` | unset | Use a local index checkout instead (development). |
@@ -47,7 +47,7 @@ only serves files and keeps a catalog of apworld bundles built from the curated
 | `GET /healthz` | Liveness. |
 | `GET /readyz` | 200 once a catalog exists. |
 | `POST /admin/refresh` | Requests a refresh. Returns 202 with status. Needs the bearer token. |
-| `GET /admin/status` | This pod's refresh progress, the lease holder, and the last published refresh with failures. Needs the bearer token. |
+| `GET /admin/status` | Needs the bearer token. Shows this pod's refresh progress, the lease holder, the last published refresh with its failures, and the last refresh that downloaded or analyzed anything (pod restarts publish cache-only refreshes). |
 
 ## Running several pods
 

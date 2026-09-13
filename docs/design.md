@@ -139,8 +139,9 @@ analysis-v1/<key>/            bundle.zip, result.json (key = hash of analyzer co
   - `/healthz` for liveness and `/readyz` for readiness;
   - egress to GitHub for the index and apworld downloads.
 
-  Envoy terminates TLS.
-- **Resources.** Each analyzer process peaks at a few hundred MB, so `KALAPANA_ANALYZER_CONCURRENCY` should follow the pod's memory limit. Once the cache is warm, only new index versions are processed.
+  Envoy terminates TLS. The deployment sets `enableServiceLinks: false`, although the server also ignores the `KALAPANA_PORT=tcp://...` value Kubernetes injects for a Service named `kalapana`.
+- **Resources.** Each analyzer process peaks at about 250 MB. In the cluster, the first refresh on an empty volume took about 20 minutes with 4 analyzers, peaking at about 870 MiB working set and 6 cores; the other replica stayed under 80 MiB. Once the cache is warm, only new index versions are processed.
+- **Hostnames.** Nothing in the server or web client names a hostname, so moving from `ut.ionium.us` to kalapana's own domain is an infrastructure change only. Keep it that way.
 - **Headers.** HTML gets a Content Security Policy:
   - `script-src 'self' 'wasm-unsafe-eval'`;
   - `connect-src 'self' wss: ws:`;

@@ -10,6 +10,7 @@ const data = (...parts) => join(config.dataDir, ...parts);
 export const paths = {
   catalog: () => data("catalog.json"),
   lastRefresh: () => data("last-refresh.json"),
+  lastRefreshWithChanges: () => data("last-refresh-with-changes.json"),
   refreshRequest: () => data("refresh-requested.json"),
   lease: () => data("refresh.lease"),
   apworld: (sha256) => data("apworlds", `${sha256}.apworld`),

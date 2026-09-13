@@ -48,7 +48,7 @@ export async function runTask(task, { jobDir, input, mounts = {}, timeoutMs = co
   return {
     ok: false,
     crashed: true,
-    error: timedOut ? `timed out after ${timeoutMs / 1000}s` : `analyzer exited with code ${exitCode}\n${output}`,
+    error: `${timedOut ? `timed out after ${timeoutMs / 1000}s` : `analyzer exited with code ${exitCode}`}\n${output}`,
   };
 }
 

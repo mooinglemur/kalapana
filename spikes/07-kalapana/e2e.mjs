@@ -5,10 +5,13 @@ import { mkdir } from "node:fs/promises";
 
 const positional = [];
 const options = {};
+// Flags without a value; --insecure accepts a self-signed certificate on a local wss:// test server.
+const BOOLEAN_OPTIONS = new Set(["insecure"]);
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
-  if (argv[i].startsWith("--")) options[argv[i].slice(2)] = argv[++i];
-  else positional.push(argv[i]);
+  if (!argv[i].startsWith("--")) positional.push(argv[i]);
+  else if (BOOLEAN_OPTIONS.has(argv[i].slice(2))) options[argv[i].slice(2)] = true;
+  else options[argv[i].slice(2)] = argv[++i];
 }
 const [base, address, slot, shotDir] = positional;
 if (!shotDir) {
@@ -25,6 +28,7 @@ const browser = await puppeteer.launch({
   executablePath: "/usr/bin/google-chrome-stable",
   headless: true,
   protocolTimeout: 300_000,
+  args: options.insecure ? ["--ignore-certificate-errors"] : [],
 });
 let exitCode = 0;
 try {

@@ -86,5 +86,10 @@ async def connect(uri: str, **_kwargs) -> BrowserWebSocket:
 
 
 def install() -> None:
+    import CommonClient
     import websockets
+
     websockets.connect = connect
+    # server_loop builds an ssl context (certifi and the ssl module) for wss:// before calling connect.
+    # The browser does TLS, so there's nothing to build.
+    CommonClient.get_ssl_context = lambda: None

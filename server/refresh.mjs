@@ -53,6 +53,7 @@ export async function refreshStatus() {
     pendingRequest: await readJson(paths.refreshRequest(), null),
     lease: await readJson(paths.lease(), null).catch(() => null),
     lastRefresh: await readJson(paths.lastRefresh(), null),
+    lastRefreshWithChanges: await readJson(paths.lastRefreshWithChanges(), null),
   };
 }
 
@@ -62,7 +63,12 @@ async function refreshLoop() {
   let lease = null;
   try {
     lease = await Lease.acquire(paths.lease(), config.podName);
-    if (!lease) return;
+    if (!lease) {
+      const holder = await readJson(paths.lease(), null).catch(() => null);
+      const expires = holder?.expires ? new Date(holder.expires).toISOString() : "unknown";
+      log(`refresh requested, but another pod holds the refresh lease (${holder?.owner ?? "unknown"}, expires ${expires})`);
+      return;
+    }
     while (!lease.lost && (await exists(paths.refreshRequest()))) {
       await rm(paths.refreshRequest(), { force: true });
       await refreshOnce(lease);
@@ -77,10 +83,22 @@ async function refreshLoop() {
 
 function recordFailure(item, error) {
   status.counts.failed = (status.counts.failed ?? 0) + 1;
-  if (status.failures.length >= MAX_FAILURES_REPORTED) return;
   const lines = String(error).trim().split("\n");
-  status.failures.push({ module: item.module, version: item.version, error: lines[lines.length - 1].slice(0, 500) });
+  const summary = lines[lines.length - 1].slice(0, 500);
+  log(`failed: ${item.module} ${item.version}: ${summary}`);
+  if (status.failures.length < MAX_FAILURES_REPORTED) {
+    status.failures.push({ module: item.module, version: item.version, error: summary });
+  }
 }
+
+// Logs a progress line every 30 seconds until the returned function is called.
+function logProgress(describe) {
+  const timer = setInterval(() => log(describe()), 30_000);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
+const secondsSince = (start) => Math.round((Date.now() - start) / 1000);
 
 async function refreshOnce(lease) {
   Object.assign(status, {
@@ -95,6 +113,7 @@ async function refreshOnce(lease) {
   const work = join(config.workDir, `refresh-${randomBytes(4).toString("hex")}`);
   await mkdir(work, { recursive: true });
   const started = Date.now();
+  log("refresh started");
   try {
     status.phase = "core";
     const core = await ensureCore(work);
@@ -114,7 +133,10 @@ async function refreshOnce(lease) {
     tracker.analysis = await ensureAnalysis(tracker, core, work);
     if (!tracker.analysis.ok) throw new Error(`tracker.apworld failed analysis: ${tracker.analysis.error}`);
 
+    log(`tracker ${tracker.version} ready`);
+
     status.phase = "index";
+    const indexStarted = Date.now();
     const indexRoot = await fetchIndex(work);
     const parsed = await runTask("parse_index", { jobDir: join(work, "parse-index"), mounts: { "/index": indexRoot } });
     if (!parsed.ok) throw new Error(`index parse failed: ${parsed.error}`);
@@ -124,40 +146,65 @@ async function refreshOnce(lease) {
     for (const [file, error] of Object.entries(parsed.errors)) recordFailure({ module: file, version: "-" }, error);
     const items = resolveItems(parsed, indexRoot);
     Object.assign(status.counts, { versions: items.length, downloaded: 0, analyzed: 0, cached: 0 });
+    log(`index: ${Object.keys(parsed.worlds).length} worlds, ${items.length} versions to process (${secondsSince(indexStarted)}s)`);
 
     status.phase = "download";
+    const downloadStarted = Date.now();
     const unlocked = await readJson(paths.unlockedDownloads(), {});
     const downloadLimit = limiter(config.downloadConcurrency);
-    await Promise.all(
-      items.map((item) =>
-        downloadLimit(async () => {
-          // Core worlds come from the AP source in the image.
-          if (item.error || item.kind === "core" || lease.lost) return;
-          try {
-            await ensureDownloaded(item, unlocked);
-          } catch (err) {
-            item.error = err.message;
-          }
-          if (item.error) recordFailure(item, item.error);
-        }),
-      ),
+    let downloadsChecked = 0;
+    const stopDownloadProgress = logProgress(
+      () => `downloading: ${downloadsChecked}/${items.length} checked, ${status.counts.downloaded} new, ${status.counts.failed ?? 0} failed`,
     );
+    try {
+      await Promise.all(
+        items.map((item) =>
+          downloadLimit(async () => {
+            try {
+              // Core worlds come from the AP source in the image.
+              if (item.error || item.kind === "core" || lease.lost) return;
+              try {
+                await ensureDownloaded(item, unlocked);
+              } catch (err) {
+                item.error = err.message;
+              }
+              if (item.error) recordFailure(item, item.error);
+            } finally {
+              downloadsChecked++;
+            }
+          }),
+        ),
+      );
+    } finally {
+      stopDownloadProgress();
+    }
     await writeFileAtomic(paths.unlockedDownloads(), JSON.stringify(unlocked, null, 1));
+    log(`downloads done: ${status.counts.downloaded} new, ${status.counts.failed ?? 0} failed (${secondsSince(downloadStarted)}s)`);
 
     status.phase = "analyze";
+    const analyzeStarted = Date.now();
+    const toAnalyze = items.filter((item) => !item.error);
     const analyzeLimit = limiter(config.analyzerConcurrency);
-    await Promise.all(
-      items
-        .filter((item) => !item.error)
-        .map((item) =>
+    let analysesDone = 0;
+    const describeAnalysis = () =>
+      `${analysesDone}/${toAnalyze.length} (cached ${status.counts.cached}, analyzed ${status.counts.analyzed}, failed ${status.counts.failed ?? 0})`;
+    const stopAnalyzeProgress = logProgress(() => `analyzing: ${describeAnalysis()}`);
+    try {
+      await Promise.all(
+        toAnalyze.map((item) =>
           analyzeLimit(async () => {
             if (lease.lost) return;
             item.analysis = await ensureAnalysis(withAnalysisKey(item), core, work);
+            analysesDone++;
             if (!item.analysis.ok) recordFailure(item, item.analysis.error);
           }),
         ),
-    );
+      );
+    } finally {
+      stopAnalyzeProgress();
+    }
     if (lease.lost) throw new Error("the refresh lease was lost to another pod");
+    log(`analysis done: ${describeAnalysis()} (${secondsSince(analyzeStarted)}s)`);
 
     status.phase = "publish";
     const catalog = buildCatalog({ core, tracker, items });
@@ -171,6 +218,10 @@ async function refreshOnce(lease) {
       failures: status.failures,
     };
     await writeFileAtomic(paths.lastRefresh(), JSON.stringify(summary, null, 1));
+    // Every pod start refreshes, and a cache-only run would otherwise hide the last one that did real work.
+    if (status.counts.downloaded || status.counts.analyzed) {
+      await writeFileAtomic(paths.lastRefreshWithChanges(), JSON.stringify(summary, null, 1));
+    }
     log(`catalog published: ${summary.games} games from ${items.length} versions in ${summary.seconds}s`, JSON.stringify(status.counts));
   } catch (err) {
     status.lastError = String(err.message ?? err);
@@ -283,9 +334,14 @@ async function ensureCore(work) {
   const key = await coreKey();
   const dir = paths.coreDir(key);
   const cached = await readJson(join(dir, "result.json"), null);
-  if (cached?.ok) return { key, result: cached };
+  if (cached?.ok) {
+    log(`core bundle ${key.slice(0, 12)} already built`);
+    return { key, result: cached };
+  }
 
-  log("building core bundle", key.slice(0, 12));
+  log(`building core bundle ${key.slice(0, 12)}`);
+  const coreStarted = Date.now();
+  const stopProgress = logProgress(() => `still building core bundle (${secondsSince(coreStarted)}s)`);
   const jobDir = join(work, "core");
   const result = await runTask("build_core", {
     jobDir,
@@ -296,8 +352,9 @@ async function ensureCore(work) {
       "/runtime": config.runtimeDir,
     },
     timeoutMs: 600_000,
-  });
+  }).finally(stopProgress);
   if (!result.ok) throw new Error(`core bundle build failed: ${result.error}`);
+  log(`core bundle built in ${secondsSince(coreStarted)}s (${result.files} files, ${Math.round(result.bytes / 1024)} KB)`);
   await publishDirectory(dir, ["result.json", "core.zip", "core-src.zip"].map((name) => [join(jobDir, name), name]));
   return { key, result };
 }

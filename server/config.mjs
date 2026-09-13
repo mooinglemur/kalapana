@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { cpus, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { log } from "./log.mjs";
+import { integerSetting, portSetting } from "./settings.mjs";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const env = process.env;
@@ -26,7 +28,7 @@ export const config = {
   // Per-pod scratch space for analyzer jobs.
   workDir: resolve(env.KALAPANA_WORK_DIR ?? join(tmpdir(), "kalapana")),
   host: env.KALAPANA_HOST ?? "::",
-  port: Number(env.KALAPANA_PORT ?? 8080),
+  port: portSetting(env, "KALAPANA_PORT", 8080, log),
   adminToken: adminToken(),
   indexUrl: env.KALAPANA_INDEX_URL ?? "https://codeload.github.com/ionium-ap/Archipelago-index/tar.gz/refs/heads/main",
   // A local index checkout to use instead of downloading, for development.
@@ -35,9 +37,9 @@ export const config = {
   indexWorlds: env.KALAPANA_INDEX_WORLDS
     ? new Set(env.KALAPANA_INDEX_WORLDS.split(",").map((name) => name.trim()).filter(Boolean))
     : null,
-  analyzerConcurrency: Number(env.KALAPANA_ANALYZER_CONCURRENCY ?? Math.max(1, Math.min(4, cpus().length))),
-  analyzerTimeoutMs: Number(env.KALAPANA_ANALYZER_TIMEOUT_SECONDS ?? 180) * 1000,
-  downloadConcurrency: Number(env.KALAPANA_DOWNLOAD_CONCURRENCY ?? 8),
+  analyzerConcurrency: integerSetting(env, "KALAPANA_ANALYZER_CONCURRENCY", Math.max(1, Math.min(4, cpus().length)), { min: 1 }),
+  analyzerTimeoutMs: integerSetting(env, "KALAPANA_ANALYZER_TIMEOUT_SECONDS", 180, { min: 1 }) * 1000,
+  downloadConcurrency: integerSetting(env, "KALAPANA_DOWNLOAD_CONCURRENCY", 8, { min: 1 }),
   refreshOnStartup: env.KALAPANA_REFRESH_ON_STARTUP !== "false",
   podName: env.HOSTNAME ?? "local",
   inputs: JSON.parse(readFileSync(join(vendorDir, "inputs.json"), "utf8")),
