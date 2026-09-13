@@ -713,12 +713,14 @@ function onWorkerMessage({ data }) {
 
 // --- wiring -------------------------------------------------------------------------------------
 
-document.querySelectorAll(".tabs button").forEach((button) =>
-  button.addEventListener("click", () => {
-    document.querySelectorAll(".tabs button").forEach((other) => other.setAttribute("aria-pressed", String(other === button)));
-    for (const tab of ["tracker", "map", "log"]) $(`tab-${tab}`).hidden = tab !== button.dataset.tab;
-  }),
-);
+function showTab(name) {
+  document.querySelectorAll(".tabs button").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.tab === name)));
+  for (const tab of ["tracker", "map", "log"]) $(`tab-${tab}`).hidden = tab !== name;
+  // A hidden list loses its scroll position, so the log reopens at its newest line.
+  if (name === "log") $("log-lines").scrollTop = $("log-lines").scrollHeight;
+}
+
+document.querySelectorAll(".tabs button").forEach((button) => button.addEventListener("click", () => showTab(button.dataset.tab)));
 $("address").addEventListener("focus", showAddress);
 $("address").addEventListener("blur", showAddress);
 // Registered before the shared listener below, which saves the fields.
@@ -778,6 +780,8 @@ $("start").addEventListener("click", () => startTracking().catch((err) => setSta
 $("map-select").addEventListener("change", (event) => worker?.postMessage(JSON.stringify({ type: "load_map", map: event.target.value })));
 $("command").addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || !event.target.value) return;
+  // Replies and chat only appear in the log.
+  showTab("log");
   worker?.postMessage(JSON.stringify({ type: "command", text: event.target.value }));
   event.target.value = "";
 });

@@ -172,6 +172,17 @@ main {
   gap: 0.75rem;
 }
 
+/* Under the content's left edge, as on puna. */
+footer {
+  width: 100%;
+  max-width: 96rem;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 0 1rem 1rem;
+}
+
+.version { color: var(--muted); font-size: 0.85rem; }
+
 /* Flex items don't collapse margins, so one gap from the container spaces everything. */
 main > * {
   margin-top: 0;
