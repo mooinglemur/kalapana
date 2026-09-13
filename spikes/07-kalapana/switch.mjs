@@ -89,16 +89,40 @@ try {
   check(second.module !== first.module, "second session loaded a different world");
   check(second.maps === 0 && second.svgChildren === 0, "no map carried over");
   check(!second.logs.some((text) => text.includes(mapSlot)), "log starts fresh");
-  await disconnect();
 
-  // Back to the first game with no pack: the earlier pack must not be reused.
-  await setSlot(mapSlot);
-  await page.click("#connect");
+  const pickRecent = async (slot) => {
+    await page.click("#recent-button");
+    await page.waitForSelector("#recent:popover-open");
+    const label = `${slot} on ${address}`;
+    const found = await page.evaluate((wanted) => {
+      const button = [...document.querySelectorAll("#recent-list button")].find((b) => b.firstChild.textContent === wanted);
+      button?.click();
+      return Boolean(button);
+    }, label);
+    if (!found) throw new Error(`no Recent entry "${label}"`);
+  };
+
+  // The connection already in use: nothing happens.
+  await pickRecent(yamlSlot);
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  const unchanged = await state();
+  check(unchanged.connection.state === "up" && unchanged.module === second.module, "picking the current Recent entry keeps the session");
+
+  // Another connection: disconnect, then check and start the new one. The first game with no pack
+  // this time, so the earlier pack and YAML must not be reused.
+  await pickRecent(mapSlot);
   await page.waitForFunction(() => window.kalapanaState.phase === "files", { timeout: 60_000 });
-  check((await state()).yamlChosen === 0, "files from the previous room are not preselected");
-  const third = await track(mapSlot, []);
+  const switched = await state();
+  check(switched.fieldsDisabled === false && switched.trackerLines === 0 && switched.maps === 0 && switched.yamlChosen === 0, "switching from Recent disconnected and cleared the page");
+  check((await page.$eval("#slot", (input) => input.value)) === mapSlot, "Recent filled the slot");
+  await page.click("#start");
+  await page.waitForFunction(() => window.kalapanaState.connection.state === "up" && window.kalapanaState.trackerLines.length > 0 || window.kalapanaState.error, { timeout: 240_000 });
+  const third = await state();
+  if (third.error) throw new Error(third.error);
+  say(`tracking ${mapSlot} from Recent: ${third.module}, ${third.trackerLines} lines, ${third.maps} maps`);
   check(third.module === first.module && third.trackerLines === first.trackerLines, "first game tracks the same as before");
   check(third.maps === 0, "no map without a pack this time");
+  check(!third.logs.some((text) => text.includes(yamlSlot)), "log starts fresh after switching");
   await disconnect();
 } catch (err) {
   say("FAILED:", err.message);

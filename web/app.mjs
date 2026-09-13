@@ -63,9 +63,12 @@ function fillFields({ address = "", slot = "", password = "" }) {
   store(STORAGE_KEYS.fields, currentFields());
 }
 
+function sameCombination(a, b) {
+  return a.address === b.address && a.slot === b.slot && (a.password ?? "") === (b.password ?? "");
+}
+
 function rememberSuccess(entry) {
-  const sameCombination = (a) => a.address === entry.address && a.slot === entry.slot && (a.password ?? "") === (entry.password ?? "");
-  const recent = loadStored(STORAGE_KEYS.recent, []).filter((item) => !sameCombination(item));
+  const recent = loadStored(STORAGE_KEYS.recent, []).filter((item) => !sameCombination(item, entry));
   recent.unshift({ ...entry, at: Date.now() });
   store(STORAGE_KEYS.recent, recent.slice(0, RECENT_MAX));
   renderRecent();
@@ -93,9 +96,14 @@ function renderRecent() {
     detail.textContent = [entry.game, ago(entry.at)].filter(Boolean).join(" · ");
     button.append(title, detail);
     button.addEventListener("click", () => {
+      $("recent").hidePopover();
+      if (sameCombination(entry, currentFields())) return;
+      // Picking another connection while tracking switches to it.
+      const switching = Boolean(worker);
+      if (switching) stopTracking();
       fillFields(entry);
       abandonCheckedRoom();
-      $("recent").hidePopover();
+      if (switching) onConnect();
     });
     const li = document.createElement("li");
     li.append(button);
@@ -226,19 +234,26 @@ function onSubmit(event) {
   else onConnect();
 }
 
-// A checked room waiting for its files no longer applies once the details change.
+// Counts connection checks, so a check that finishes after the details changed is ignored.
+let checkAttempt = 0;
+
+// A room being checked, or checked and waiting for its files, no longer applies once the details change.
 function abandonCheckedRoom() {
-  if (ui.phase !== "files") return;
+  if (ui.phase !== "checking" && ui.phase !== "files") return;
+  checkAttempt++;
   pending = null;
   ui.entry = null;
   ui.phase = "ready";
   $("files").hidden = true;
+  $("connect").disabled = false;
   setStatus("idle", "The connection details changed. Connect again to check them.");
 }
 
 async function onConnect() {
   const { address, slot, password } = currentFields();
+  const attempt = ++checkAttempt;
   store(STORAGE_KEYS.fields, currentFields());
+  ui.phase = "checking";
   $("connect").disabled = true;
   // Files picked for an earlier room may belong to a different game.
   pending = null;
@@ -248,6 +263,7 @@ async function onConnect() {
   setStatus("connecting", `Checking ${address}…`);
   try {
     const { url, roomInfo, game } = await probe(address, slot, password || null);
+    if (attempt !== checkAttempt) return;
     const checksum = roomInfo.datapackage_checksums?.[game];
     const candidates = catalog.games[game] ?? [];
     if (!candidates.length) throw new Error(`${game} isn't in the tracker catalog.`);
@@ -274,6 +290,8 @@ async function onConnect() {
     }
     await startTracking();
   } catch (err) {
+    if (attempt !== checkAttempt) return;
+    ui.phase = "ready";
     setStatus("down", err.message, { error: true });
     $("connect").disabled = false;
   }
@@ -294,7 +312,6 @@ async function startTracking() {
   resetView({ clearLog: true });
   ui.entry = entry;
   for (const id of ["address", "slot", "password"]) $(id).disabled = true;
-  $("recent-button").disabled = true;
   $("connect").textContent = "Disconnect";
   $("connect").disabled = false;
   ui.phase = "booting";
@@ -324,7 +341,6 @@ function stopTracking({ state = "idle", text = "Disconnected.", error = false } 
   pending = null;
   resetView();
   for (const id of ["address", "slot", "password"]) $(id).disabled = false;
-  $("recent-button").disabled = false;
   $("connect").textContent = "Connect";
   $("connect").disabled = false;
   ui.phase = "ready";

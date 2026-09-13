@@ -250,6 +250,7 @@ button:disabled, input:disabled { opacity: 0.6; cursor: default; }
 
 .menu .hint { margin: 0 0 0.3rem; padding: 0 0.4rem; font-size: 0.85rem; }
 .menu ul { list-style: none; margin: 0 0 0.4rem; padding: 0; }
+.menu li .hint { margin: 0; padding: 0; }
 
 .menu li button {
   display: flex;
