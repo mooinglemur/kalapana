@@ -1,6 +1,6 @@
 # Kalapana: Universal Tracker on the web
 
-Kalapana runs Archipelago's Universal Tracker (UT) in the browser at `ut.ionium.us`. Players open a link, and the tracker connects to their room with no install. Python runs in the browser via Pyodide (WebAssembly).
+Kalapana runs Archipelago's Universal Tracker (UT) in the browser at `ut.ionium.fyi`. Players open a link, and the tracker connects to their room with no install. Python runs in the browser via Pyodide (WebAssembly).
 
 This document describes the architecture of the test instance. It builds on the spikes in `spikes/`, all of which passed in Node, headless Chrome 153 and Firefox 155. The live test ran against a pahoa room on `mw.ionium.us`. For operating details (configuration, endpoints, development), see the README.
 
@@ -84,7 +84,11 @@ flowchart LR
 
   While a tracker runs, Connect becomes Disconnect. Disconnecting terminates the worker, so no Python state, uploaded file or map image carries over to the next room, slot or game, and the next Connect boots a fresh worker (about 2 seconds with the runtime cached). Picking a different Recent entry while tracking disconnects and connects to it; while idle it only fills the fields. A room check still in flight is ignored if the details change before it answers.
 
-  The gear menu has one saved option, streamer mode. It hides the room's port in the address field (except while the field is being edited), the status line and the Recent menu. The log is masked on a best-effort basis: anything shaped like `host:port`. `spikes/07-kalapana/switch.mjs` checks this.
+  **Using my apworld.** A player can choose an `.apworld` file instead of the catalog's world. After the room check, the worker loads the runtime and the file, and `world_info.inspect_upload` (the same unpacking and description code the analyzer uses) reports its worlds. The page accepts it only if one of those worlds is the slot's game with the room's datapackage checksum, then asks for a YAML or pack as usual, and the same worker goes on to track. Every vendored Pyodide package is loaded, since an upload hasn't been analyzed. `spikes/07-kalapana/upload.mjs` covers a matching apworld, the wrong game, a changed datapackage, a malformed archive and a CSP probe.
+
+  The gear menu has one saved option, streamer mode. It hides the room's port in the address field (except while the field is being edited), the status line and the Recent menu. The log is masked on a best-effort basis: anything shaped like `host:port`.
+
+  The log keeps its most recent 2000 lines, on the page and in memory. When older lines are dropped, a reader scrolled back through the log keeps their place. `spikes/07-kalapana/switch.mjs` checks this.
 - **Worker** (`web/worker.mjs`):
   1. Load Pyodide from kalapana and the packages the entries list.
   2. Unpack the core, tracker and world bundles at `/`, and place the uploaded files.
@@ -154,7 +158,7 @@ analysis-v1/<key>/            bundle.zip, result.json (key = hash of analyzer co
 
   Envoy terminates TLS. The deployment sets `enableServiceLinks: false`, although the server also ignores the `KALAPANA_PORT=tcp://...` value Kubernetes injects for a Service named `kalapana`.
 - **Resources.** Each analyzer process peaks at about 250 MB. In the cluster, the first refresh on an empty volume took about 20 minutes with 4 analyzers, peaking at about 870 MiB working set and 6 cores; the other replica stayed under 80 MiB. Once the cache is warm, only new index versions are processed.
-- **Hostnames.** Nothing in the server or web client names a hostname, so moving from `ut.ionium.us` to kalapana's own domain is an infrastructure change only. Keep it that way.
+- **Hostnames.** Nothing in the server or web client names a hostname, which is why the move from `ut.ionium.us` to `ut.ionium.fyi` needed no code changes. Keep it that way.
 - **Headers.** HTML gets a Content Security Policy:
   - `script-src 'self' 'wasm-unsafe-eval'`;
   - `connect-src 'self' wss: ws:`;
@@ -175,11 +179,12 @@ Until then, the page accepts `?address=&slot=` in the query string. It never acc
 
 ## Isolation and cookies
 
-- **Same-site risk.** Browsers draw cookie boundaries at the site (scheme plus registrable domain). Every `*.ionium.us` host is the same site as puna (`mw.ionium.us`) and the lobby (`ap-lobby.ionium.us`), and both rely on `SameSite=Lax` cookies without CSRF tokens.
-- **Testing.** The test instance runs on `ut.ionium.us` and executes only curated index worlds, core worlds and UT. There are no uploaded apworlds, and YAMLs and poptracker packs are data.
+- **Separate site.** Kalapana runs on `ut.ionium.fyi`, a different registrable domain from puna (`mw.ionium.us`) and the lobby (`ap-lobby.ionium.us`). Their cookies never reach it, and it can't toss cookies onto them. The `.fyi` site keeps no server-side sessions or user-identifying state.
 - **Guard.** Recommended for puna and the lobby regardless: reject state-changing requests unless `Sec-Fetch-Site` is `same-origin` (or `none`), with an `Origin` fallback.
-- **Full launch.** Kalapana moves to a separate registrable domain, which also blocks cookie tossing. Only then are uploaded apworlds allowed.
-- **Server side.** Index apworlds run only inside the analyzer sandbox. The server process itself never imports them.
+- **World code runs in the worker.** UT, catalog worlds and apworlds players supply all run in the Web Worker. Workers have no localStorage or DOM, so saved connections and passwords are out of their reach, and the page renders everything the worker sends as text.
+- **Worker CSP.** The server gives `worker.mjs` its own policy, built from the `?room=host:port` the page passes: scripts only from kalapana with no eval, and connections only to kalapana and that room. An IPv6 literal falls back to any WebSocket host, since CSP can't name one. Verified with a probe apworld: eval and `new Function` throw, and fetch and WebSocket requests to another origin never leave the browser.
+- **What world code can still reach.** The session's own room address, slot, password, YAML and pack; the room itself, as that slot; and the origin's IndexedDB, Cache API and OPFS. Kalapana stores nothing in those today. A saved library would have to treat their contents as untrusted.
+- **Server side.** Index apworlds run only inside the analyzer sandbox, and uploaded apworlds never reach the server. The server process itself never imports world code.
 
 ## Known limitations
 
@@ -187,6 +192,7 @@ Until then, the page accepts `?address=&slot=` in the query string. It never acc
 - **Rooms without TLS** can't be reached from an https page.
 - **No saved library yet.** The test instance doesn't keep uploaded YAMLs and packs between visits. OPFS persistence was proven in the spikes but isn't wired in.
 - **Missing UI.** No hints tab, command autocomplete, map groups or location icons yet.
+- **Uploaded apworlds aren't kept.** The choice lasts until the page is reloaded. A huge or malicious archive can exhaust the tab's memory, but nothing beyond the tab.
 - **Saved password.** The room password is kept in plain text in the browser's localStorage, along with the Recent list.
 - **Safari** is untested.
 - **Randomized YAML options.** UT's own limitation still applies: they need the rolled values filled in.

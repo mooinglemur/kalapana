@@ -23,6 +23,8 @@ const ui = (window.kalapanaState = {
 let catalog = null;
 let pending = null;
 let worker = null;
+// An apworld the player chose to track with instead of the catalog's. Kept until they remove it.
+let apworldFile = null;
 const images = new Map();
 const markerNodes = new Map();
 let markerBorder = 8;
@@ -100,7 +102,7 @@ function renderRecent() {
       $("recent").hidePopover();
       if (sameCombination(entry, currentFields())) return;
       // Picking another connection while tracking switches to it.
-      const switching = Boolean(worker);
+      const switching = isTracking();
       if (switching) stopTracking();
       fillFields(entry);
       abandonCheckedRoom();
@@ -180,12 +182,22 @@ function logLine({ level, text, markup }) {
   return li;
 }
 
+const LOG_MAX = 2000;
+
 function addLog(level, { text, markup }) {
   const entry = { level, text: text ?? unescapeMarkup(markup.replace(/\[\/?color[^\]]*\]/g, "")), markup };
   ui.logs.push(entry);
   const lines = $("log-lines");
   const atBottom = lines.scrollHeight - lines.scrollTop - lines.clientHeight < 40;
   lines.append(logLine(entry));
+  if (ui.logs.length > LOG_MAX) {
+    ui.logs.shift();
+    const oldest = lines.firstElementChild;
+    const height = oldest.offsetHeight;
+    oldest.remove();
+    // Someone reading back through the log keeps their place.
+    if (!atBottom) lines.scrollTop -= height;
+  }
   if (atBottom) lines.scrollTop = lines.scrollHeight;
 }
 
@@ -252,11 +264,88 @@ async function probe(address, slot, password) {
   throw lastError;
 }
 
+function isTracking() {
+  return ui.phase === "booting" || ui.phase === "tracking";
+}
+
 // One button: Connect when idle, Disconnect while a tracker is running (including while it retries).
 function onSubmit(event) {
   event.preventDefault();
-  if (worker) stopTracking();
+  if (isTracking()) stopTracking();
   else onConnect();
+}
+
+const runtimeInfo = () => ({ pyodide: catalog.pyodide, core: catalog.core, tracker: catalog.tracker });
+
+function discardWorker() {
+  worker?.terminate();
+  worker = null;
+}
+
+// The server gives the worker a Content Security Policy that only allows kalapana and this room.
+function spawnWorker(roomUrl) {
+  discardWorker();
+  const started = new Worker(`worker.mjs?${new URLSearchParams({ room: new URL(roomUrl).host })}`, { type: "module" });
+  worker = started;
+  // Messages a stopped worker queued before it was terminated are dropped.
+  started.onmessage = (event) => worker === started && onWorkerMessage(event);
+  return started;
+}
+
+function askForFiles(entry) {
+  $("yaml-field").hidden = !entry.needsYaml;
+  $("pack-field").hidden = !entry.map?.externalPack;
+  $("files").hidden = false;
+  const asks = [entry.needsYaml && "your player YAML", entry.map?.externalPack && "optionally its poptracker pack for the map"].filter(Boolean);
+  setStatus("idle", `${pending.description}. Add ${asks.join(" and ")}, then start tracking.`);
+  ui.phase = "files";
+  $("connect").disabled = false;
+}
+
+// The worker loads the player's apworld and reports its worlds; onInspected decides whether it fits.
+async function inspectUpload(attempt) {
+  setStatus("connecting", `Loading ${apworldFile.name}…`);
+  const bytes = new Uint8Array(await apworldFile.arrayBuffer());
+  if (attempt !== checkAttempt) return;
+  spawnWorker(pending.url).postMessage({ type: "inspect", runtime: runtimeInfo(), apworld: { name: apworldFile.name, bytes } }, [bytes.buffer]);
+}
+
+function onInspected(result) {
+  if (ui.phase !== "checking" || !pending) return;
+  const name = apworldFile?.name ?? "The apworld";
+  const fail = (text) => {
+    discardWorker();
+    ui.phase = "ready";
+    $("connect").disabled = false;
+    setStatus("down", text, { error: true });
+  };
+  if (!result.ok) {
+    addLog("ERROR", { text: result.error });
+    return fail(`${name} couldn't be loaded. See the Log view.`);
+  }
+  const { game, slot } = pending;
+  const world = result.worlds.find((candidate) => candidate.game === game);
+  if (!world) return fail(`${name} is for ${result.worlds.map((candidate) => candidate.game).join(", ")}, but slot "${slot}" plays ${game}.`);
+  if (world.checksum !== pending.checksum) {
+    return fail(`${name} doesn't match this room's ${game} datapackage, so it's probably not the version the room was generated with.`);
+  }
+  if (world.disable_ut) return fail(`The author of ${game} has asked Universal Tracker not to track it.`);
+
+  const entry = {
+    module: result.module,
+    version: result.version ?? null,
+    source: "upload",
+    checksum: world.checksum,
+    packages: [],
+    needsYaml: world.needs_yaml,
+    disableUt: world.disable_ut,
+    map: world.map && { externalPack: world.map.external_pack, internalPack: world.map.internal_pack },
+  };
+  pending.entry = entry;
+  pending.description = `${game}${entry.version ? ` ${entry.version}` : ""} from ${name}`;
+  ui.entry = entry;
+  if (entry.needsYaml || entry.map?.externalPack) return askForFiles(entry);
+  startTracking().catch((err) => setStatus("down", err.message, { error: true }));
 }
 
 // Counts connection checks, so a check that finishes after the details changed is ignored.
@@ -266,6 +355,7 @@ let checkAttempt = 0;
 function abandonCheckedRoom() {
   if (ui.phase !== "checking" && ui.phase !== "files") return;
   checkAttempt++;
+  discardWorker();
   pending = null;
   ui.entry = null;
   ui.phase = "ready";
@@ -280,6 +370,7 @@ async function onConnect() {
   store(STORAGE_KEYS.fields, currentFields());
   ui.phase = "checking";
   $("connect").disabled = true;
+  discardWorker();
   // Files picked for an earlier room may belong to a different game.
   pending = null;
   $("files").hidden = true;
@@ -290,6 +381,9 @@ async function onConnect() {
     const { url, roomInfo, game } = await probe(address, slot, password || null);
     if (attempt !== checkAttempt) return;
     const checksum = roomInfo.datapackage_checksums?.[game];
+    pending = { url, address, slot, password: password || null, game, checksum, entry: null, description: game };
+    if (apworldFile) return await inspectUpload(attempt);
+
     const candidates = catalog.games[game] ?? [];
     if (!candidates.length) throw new Error(`${game} isn't in the tracker catalog.`);
     const matches = candidates.filter((candidate) => candidate.checksum === checksum);
@@ -300,19 +394,11 @@ async function onConnect() {
     const entry = matches[0];
     if (entry.disableUt) throw new Error(`The author of ${game} has asked Universal Tracker not to track it.`);
 
-    pending = { url, address, slot, password: password || null, game, entry };
+    pending.entry = entry;
     ui.entry = entry;
     const sameData = matches.length > 1 ? ` (${matches.length} versions share this datapackage; using the newest)` : "";
-    if (entry.needsYaml || entry.map?.externalPack) {
-      $("yaml-field").hidden = !entry.needsYaml;
-      $("pack-field").hidden = !entry.map?.externalPack;
-      $("files").hidden = false;
-      const asks = [entry.needsYaml && "your player YAML", entry.map?.externalPack && "optionally its poptracker pack for the map"].filter(Boolean);
-      setStatus("idle", `${game} ${entry.version}${sameData}. Add ${asks.join(" and ")}, then start tracking.`);
-      ui.phase = "files";
-      $("connect").disabled = false;
-      return;
-    }
+    pending.description = `${game} ${entry.version}${sameData}`;
+    if (entry.needsYaml || entry.map?.externalPack) return askForFiles(entry);
     await startTracking();
   } catch (err) {
     if (attempt !== checkAttempt) return;
@@ -321,6 +407,8 @@ async function onConnect() {
     $("connect").disabled = false;
   }
 }
+
+const LOCKED_WHILE_TRACKING = ["address", "slot", "password", "apworld-button", "apworld-clear"];
 
 async function startTracking() {
   const { entry } = pending;
@@ -336,21 +424,17 @@ async function startTracking() {
 
   resetView({ clearLog: true });
   ui.entry = entry;
-  for (const id of ["address", "slot", "password"]) $(id).disabled = true;
+  for (const id of LOCKED_WHILE_TRACKING) $(id).disabled = true;
   $("connect").textContent = "Disconnect";
   $("connect").disabled = false;
   ui.phase = "booting";
-  setStatus("connecting", `Starting the tracker for ${pending.game} ${entry.version}…`);
+  setStatus("connecting", `Starting the tracker for ${pending.description}…`);
 
-  const started = new Worker("worker.mjs", { type: "module" });
-  worker = started;
-  // Messages a stopped worker queued before it was terminated are dropped.
-  started.onmessage = (event) => worker === started && onWorkerMessage(event);
+  // An uploaded apworld's worker is already running from the inspection.
+  if (!worker) spawnWorker(pending.url).postMessage({ type: "boot", runtime: runtimeInfo(), entry });
   const transfer = [...yamls, ...(pack ? [pack] : [])].map((file) => file.bytes.buffer);
   worker.postMessage({
-    type: "boot",
-    runtime: { pyodide: catalog.pyodide, core: catalog.core, tracker: catalog.tracker },
-    entry,
+    type: "start",
     yamls,
     pack,
     connect: { address: pending.url, slot: pending.slot, password: pending.password },
@@ -361,11 +445,10 @@ async function startTracking() {
 // The whole worker goes, so no Python state (loaded worlds, UT's generation, files) outlives the
 // session. The log is kept so a failure can still be read; it is cleared when tracking starts again.
 function stopTracking({ state = "idle", text = "Disconnected.", error = false } = {}) {
-  worker?.terminate();
-  worker = null;
+  discardWorker();
   pending = null;
   resetView();
-  for (const id of ["address", "slot", "password"]) $(id).disabled = false;
+  for (const id of LOCKED_WHILE_TRACKING) $(id).disabled = false;
   $("connect").textContent = "Connect";
   $("connect").disabled = false;
   ui.phase = "ready";
@@ -484,6 +567,9 @@ function onWorkerMessage({ data }) {
       ui.bootTimings = message.timings;
       $("command").disabled = false;
       break;
+    case "inspected":
+      onInspected(message);
+      break;
     case "fatal":
       stopTracking({ state: "down", text: "The tracker failed to start. See the Log view.", error: true });
       ui.phase = "failed";
@@ -562,6 +648,24 @@ $("streamer").addEventListener("change", (event) => {
   $("message").textContent = hidePorts(ui.connection.text);
   renderRecent();
   $("log-lines").replaceChildren(...ui.logs.map(logLine));
+});
+function showApworldChoice() {
+  $("apworld-button").hidden = Boolean(apworldFile);
+  $("apworld-choice").hidden = !apworldFile;
+  $("apworld-name").textContent = apworldFile ? `Using ${apworldFile.name}` : "";
+}
+$("apworld-button").addEventListener("click", () => $("apworld").click());
+$("apworld").addEventListener("change", (event) => {
+  apworldFile = event.target.files[0] ?? null;
+  // Cleared so that choosing the same file again still counts as a change.
+  event.target.value = "";
+  showApworldChoice();
+  abandonCheckedRoom();
+});
+$("apworld-clear").addEventListener("click", () => {
+  apworldFile = null;
+  showApworldChoice();
+  abandonCheckedRoom();
 });
 $("connect-form").addEventListener("submit", onSubmit);
 for (const id of ["address", "slot", "password"]) {

@@ -50,6 +50,12 @@
       <label>Server <input id="address" type="text" required placeholder="mw.ionium.us:50000" spellcheck="false"></label>
       <label>Slot <input id="slot" type="text" required spellcheck="false"></label>
       <label>Password <input id="password" type="password"></label>
+      <input id="apworld" type="file" accept=".apworld" hidden>
+      <button id="apworld-button" type="button" title="Track with an apworld file of your own instead of the catalog's">Use my apworld&hellip;</button>
+      <span id="apworld-choice" class="choice" hidden>
+        <span id="apworld-name"></span>
+        <button id="apworld-clear" type="button" class="linklike">remove</button>
+      </span>
       <button id="connect" type="submit" disabled>Connect</button>
       <button id="recent-button" type="button" popovertarget="recent" hidden>Recent <span aria-hidden="true">&#x25BE;</span></button>
     </form>

@@ -35,6 +35,8 @@ export function buildCatalog({ core, tracker, items }) {
     pyodide: {
       version: config.inputs.pyodide.version,
       base: `/runtime/pyodide-${config.inputs.pyodide.version}/`,
+      // Every vendored package, for an apworld the player supplies, which hasn't been analyzed.
+      packages: config.inputs.pyodide.packages,
     },
     core: { bundle: `/bundles/core/${core.key}.zip`, packages: core.result.packages },
     tracker: {

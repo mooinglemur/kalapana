@@ -46,6 +46,23 @@ const CONTENT_SECURITY_POLICY = [
   "frame-ancestors 'none'",
 ].join("; ");
 
+// The worker runs world code, including apworlds players supply, so it may only reach kalapana and the
+// room it tracks. The page passes the room as ?room=host:port.
+const ROOM_HOST = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::\d{1,5})?$/;
+
+function workerPolicy(room) {
+  let rooms;
+  if (room && ROOM_HOST.test(room)) rooms = `wss://${room} ws://${room}`;
+  // CSP can't name an IPv6 literal, so such rooms fall back to any WebSocket host.
+  else if (room && /^\[[0-9A-Fa-f:.]+\](?::\d{1,5})?$/.test(room)) rooms = "wss: ws:";
+  else return null;
+  return [
+    "default-src 'none'",
+    "script-src 'self' 'wasm-unsafe-eval'",
+    `connect-src 'self' ${rooms}`,
+  ].join("; ");
+}
+
 const compressedBodies = new Map();
 
 function compressedBody(path, info, encoding) {
@@ -73,7 +90,7 @@ function sendJson(res, statusCode, value) {
   res.end(JSON.stringify(value, null, 1));
 }
 
-async function sendFile(req, res, path, { immutable = false } = {}) {
+async function sendFile(req, res, path, { immutable = false, policy = null } = {}) {
   let info;
   try {
     info = await stat(path);
@@ -90,7 +107,8 @@ async function sendFile(req, res, path, { immutable = false } = {}) {
     ETag: etag,
     Vary: "Accept-Encoding",
   };
-  if (ext === ".html") headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY;
+  if (policy) headers["Content-Security-Policy"] = policy;
+  else if (ext === ".html") headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY;
   if (req.headers["if-none-match"] === etag) {
     res.writeHead(304, headers);
     return res.end();
@@ -156,6 +174,12 @@ async function handle(req, res) {
   if (match) return sendFile(req, res, join(paths.coreDir(match[1]), "core.zip"), { immutable: true });
   match = path.match(/^\/bundles\/worlds\/([a-f0-9]{64})\.zip$/);
   if (match) return sendFile(req, res, join(paths.analysisDir(match[1]), "bundle.zip"), { immutable: true });
+
+  if (path === "/worker.mjs") {
+    const policy = workerPolicy(new URL(req.url, "http://localhost").searchParams.get("room"));
+    if (!policy) return sendText(res, 400, "the worker needs ?room=host:port");
+    return sendFile(req, res, join(config.webDir, "worker.mjs"), { policy });
+  }
 
   const file = normalize(join(config.webDir, path === "/" ? "index.html" : path));
   if (!file.startsWith(config.webDir + sep)) return sendText(res, 404, "not found");
