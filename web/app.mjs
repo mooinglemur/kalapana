@@ -94,6 +94,7 @@ function renderRecent() {
     button.append(title, detail);
     button.addEventListener("click", () => {
       fillFields(entry);
+      abandonCheckedRoom();
       $("recent").hidePopover();
     });
     const li = document.createElement("li");
@@ -218,11 +219,32 @@ async function probe(address, slot, password) {
   throw lastError;
 }
 
-async function onConnect(event) {
+// One button: Connect when idle, Disconnect while a tracker is running (including while it retries).
+function onSubmit(event) {
   event.preventDefault();
+  if (worker) stopTracking();
+  else onConnect();
+}
+
+// A checked room waiting for its files no longer applies once the details change.
+function abandonCheckedRoom() {
+  if (ui.phase !== "files") return;
+  pending = null;
+  ui.entry = null;
+  ui.phase = "ready";
+  $("files").hidden = true;
+  setStatus("idle", "The connection details changed. Connect again to check them.");
+}
+
+async function onConnect() {
   const { address, slot, password } = currentFields();
   store(STORAGE_KEYS.fields, currentFields());
   $("connect").disabled = true;
+  // Files picked for an earlier room may belong to a different game.
+  pending = null;
+  $("files").hidden = true;
+  $("yaml").value = "";
+  $("pack").value = "";
   setStatus("connecting", `Checking ${address}…`);
   try {
     const { url, roomInfo, game } = await probe(address, slot, password || null);
@@ -247,6 +269,7 @@ async function onConnect(event) {
       const asks = [entry.needsYaml && "your player YAML", entry.map?.externalPack && "optionally its poptracker pack for the map"].filter(Boolean);
       setStatus("idle", `${game} ${entry.version}${sameData}. Add ${asks.join(" and ")}, then start tracking.`);
       ui.phase = "files";
+      $("connect").disabled = false;
       return;
     }
     await startTracking();
@@ -268,13 +291,19 @@ async function startTracking() {
   const packFile = $("pack").files[0];
   const pack = packFile ? await fileEntry(packFile) : null;
 
-  $("files").hidden = true;
+  resetView({ clearLog: true });
+  ui.entry = entry;
   for (const id of ["address", "slot", "password"]) $(id).disabled = true;
+  $("recent-button").disabled = true;
+  $("connect").textContent = "Disconnect";
+  $("connect").disabled = false;
   ui.phase = "booting";
   setStatus("connecting", `Starting the tracker for ${pending.game} ${entry.version}…`);
 
-  worker = new Worker("worker.mjs", { type: "module" });
-  worker.onmessage = onWorkerMessage;
+  const started = new Worker("worker.mjs", { type: "module" });
+  worker = started;
+  // Messages a stopped worker queued before it was terminated are dropped.
+  started.onmessage = (event) => worker === started && onWorkerMessage(event);
   const transfer = [...yamls, ...(pack ? [pack] : [])].map((file) => file.bytes.buffer);
   worker.postMessage({
     type: "boot",
@@ -285,6 +314,45 @@ async function startTracking() {
     connect: { address: pending.url, slot: pending.slot, password: pending.password },
   }, transfer);
   sendVisibility();
+}
+
+// The whole worker goes, so no Python state (loaded worlds, UT's generation, files) outlives the
+// session. The log is kept so a failure can still be read; it is cleared when tracking starts again.
+function stopTracking({ state = "idle", text = "Disconnected.", error = false } = {}) {
+  worker?.terminate();
+  worker = null;
+  pending = null;
+  resetView();
+  for (const id of ["address", "slot", "password"]) $(id).disabled = false;
+  $("recent-button").disabled = false;
+  $("connect").textContent = "Connect";
+  $("connect").disabled = false;
+  ui.phase = "ready";
+  setStatus(state, text, { error });
+}
+
+function resetView({ clearLog = false } = {}) {
+  for (const url of images.values()) URL.revokeObjectURL(url);
+  images.clear();
+  markerNodes.clear();
+  markerBorder = 8;
+  $("files").hidden = true;
+  $("tracker-lines").replaceChildren();
+  $("labels").replaceChildren();
+  $("map-select").replaceChildren();
+  $("current-map").textContent = "";
+  $("map").replaceChildren();
+  $("map").removeAttribute("viewBox");
+  $("command").value = "";
+  $("command").disabled = true;
+  Object.assign(ui, {
+    entry: null, bootTimings: null, trackerLines: [], labels: {}, maps: [],
+    markers: 0, markerUpdates: 0, mapImageLoaded: false, updates: [], error: null,
+  });
+  if (clearLog) {
+    $("log-lines").replaceChildren();
+    ui.logs = [];
+  }
 }
 
 // The bridge decides reconnects, so it needs to know whether anyone is looking at the page.
@@ -347,6 +415,7 @@ function showMapImage(source) {
   if (!url) return;
   const probeImage = new Image();
   probeImage.onload = () => {
+    if (images.get(source) !== url) return;
     const svg = $("map");
     svg.setAttribute("viewBox", `0 0 ${probeImage.naturalWidth} ${probeImage.naturalHeight}`);
     const image = svg.querySelector("image") ?? svgElement("image", {});
@@ -375,8 +444,8 @@ function onWorkerMessage({ data }) {
       $("command").disabled = false;
       break;
     case "fatal":
+      stopTracking({ state: "down", text: "The tracker failed to start. See the Log view.", error: true });
       ui.phase = "failed";
-      setStatus("down", "The tracker failed to start. See the Log view.", { error: true });
       addLog("ERROR", { text: message.text });
       break;
     case "connection":
@@ -438,9 +507,12 @@ document.querySelectorAll(".tabs button").forEach((button) =>
     for (const tab of ["tracker", "map", "log"]) $(`tab-${tab}`).hidden = tab !== button.dataset.tab;
   }),
 );
-$("connect-form").addEventListener("submit", onConnect);
+$("connect-form").addEventListener("submit", onSubmit);
 for (const id of ["address", "slot", "password"]) {
-  $(id).addEventListener("input", () => store(STORAGE_KEYS.fields, currentFields()));
+  $(id).addEventListener("input", () => {
+    store(STORAGE_KEYS.fields, currentFields());
+    abandonCheckedRoom();
+  });
 }
 $("start").addEventListener("click", () => startTracking().catch((err) => setStatus("down", err.message, { error: true })));
 $("map-select").addEventListener("change", (event) => worker?.postMessage(JSON.stringify({ type: "load_map", map: event.target.value })));
