@@ -144,6 +144,21 @@ a:hover { text-decoration: none; }
   box-shadow: inset 0 0 0 1px var(--border);
 }
 
+/* Sized to line up with the theme group beside it. */
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  padding: calc(0.25rem + 2px) calc(0.4rem + 2px);
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.icon-button:hover { color: var(--text); border-color: var(--border); }
+.icon-button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
 main {
   flex: 1;
   min-height: 0;
@@ -251,6 +266,15 @@ button:disabled, input:disabled { opacity: 0.6; cursor: default; }
 .menu .hint { margin: 0 0 0.3rem; padding: 0 0.4rem; font-size: 0.85rem; }
 .menu ul { list-style: none; margin: 0 0 0.4rem; padding: 0; }
 .menu li .hint { margin: 0; padding: 0; }
+
+.menu .check {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.35rem 0.4rem;
+  color: var(--text);
+  font-size: 0.95rem;
+  cursor: pointer;
+}
 
 .menu li button {
   display: flex;

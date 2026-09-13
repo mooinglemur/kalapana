@@ -53,11 +53,12 @@ function store(key, value) {
 }
 
 function currentFields() {
-  return { address: $("address").value.trim(), slot: $("slot").value.trim(), password: $("password").value };
+  return { address: serverAddress.trim(), slot: $("slot").value.trim(), password: $("password").value };
 }
 
 function fillFields({ address = "", slot = "", password = "" }) {
-  $("address").value = address;
+  serverAddress = address;
+  showAddress();
   $("slot").value = slot;
   $("password").value = password;
   store(STORAGE_KEYS.fields, currentFields());
@@ -111,6 +112,23 @@ function renderRecent() {
   }));
 }
 
+// --- streamer mode ------------------------------------------------------------------------------
+// Hides the room's port, which is enough to join it, from the address field and the status line.
+// The field holds the real address only while it has focus; `serverAddress` is the source of truth.
+
+const STREAMER_KEY = "kalapana.streamer";
+let streamerMode = loadStored(STREAMER_KEY, false) === true;
+let serverAddress = "";
+
+function hidePorts(text) {
+  return streamerMode ? text.replace(/([\w\-.\]]):\d{1,5}(?!\d)/g, "$1:•••••") : text;
+}
+
+function showAddress() {
+  const input = $("address");
+  input.value = document.activeElement === input ? serverAddress : hidePorts(serverAddress);
+}
+
 // --- the status line ----------------------------------------------------------------------------
 // The dot and the sentence always change together. state: "idle" (muted), "connecting", "up", "down".
 
@@ -119,7 +137,7 @@ function setStatus(state, text, { error = false } = {}) {
   if (error) ui.error = text;
   $("link").className = state === "up" ? "link-state up" : state === "down" ? "link-state down" : "link-state";
   $("status").className = state === "down" ? "warning status" : "notice status";
-  $("message").textContent = text;
+  $("message").textContent = hidePorts(text);
 }
 
 // --- markup -------------------------------------------------------------------------------------
@@ -523,6 +541,19 @@ document.querySelectorAll(".tabs button").forEach((button) =>
     for (const tab of ["tracker", "map", "log"]) $(`tab-${tab}`).hidden = tab !== button.dataset.tab;
   }),
 );
+$("address").addEventListener("focus", showAddress);
+$("address").addEventListener("blur", showAddress);
+// Registered before the shared listener below, which saves the fields.
+$("address").addEventListener("input", (event) => {
+  serverAddress = event.target.value;
+});
+$("streamer").checked = streamerMode;
+$("streamer").addEventListener("change", (event) => {
+  streamerMode = event.target.checked;
+  store(STREAMER_KEY, streamerMode);
+  showAddress();
+  $("message").textContent = hidePorts(ui.connection.text);
+});
 $("connect-form").addEventListener("submit", onSubmit);
 for (const id of ["address", "slot", "password"]) {
   $(id).addEventListener("input", () => {
@@ -538,13 +569,19 @@ $("command").addEventListener("keydown", (event) => {
   event.target.value = "";
 });
 
-$("recent").addEventListener("toggle", (event) => {
-  if (event.newState !== "open") return;
-  const anchor = $("recent-button").getBoundingClientRect();
-  const menu = $("recent");
-  menu.style.top = `${anchor.bottom + 4}px`;
-  menu.style.left = `${Math.max(8, Math.min(anchor.left, window.innerWidth - menu.offsetWidth - 8))}px`;
-});
+// Menus open under their buttons: Recent from its left edge, settings from its right edge.
+function placeMenu(menuId, buttonId, align) {
+  $(menuId).addEventListener("toggle", (event) => {
+    if (event.newState !== "open") return;
+    const anchor = $(buttonId).getBoundingClientRect();
+    const menu = $(menuId);
+    const left = align === "right" ? anchor.right - menu.offsetWidth : anchor.left;
+    menu.style.top = `${anchor.bottom + 4}px`;
+    menu.style.left = `${Math.max(8, Math.min(left, window.innerWidth - menu.offsetWidth - 8))}px`;
+  });
+}
+placeMenu("recent", "recent-button", "left");
+placeMenu("settings", "settings-button", "right");
 $("recent-clear").addEventListener("click", () => {
   store(STORAGE_KEYS.recent, []);
   renderRecent();
@@ -557,7 +594,11 @@ window.addEventListener("online", () => worker?.postMessage(JSON.stringify({ typ
 // Server and slot may come from the query string (never the password), and otherwise from last time.
 const params = new URLSearchParams(location.search);
 fillFields(loadStored(STORAGE_KEYS.fields, {}));
-for (const field of ["address", "slot"]) if (params.has(field)) $(field).value = params.get(field);
+if (params.has("slot")) $("slot").value = params.get("slot");
+if (params.has("address")) {
+  serverAddress = params.get("address");
+  showAddress();
+}
 renderRecent();
 
 try {
