@@ -23,7 +23,9 @@ const ui = (window.kalapanaState = {
 let catalog = null;
 let pending = null;
 let worker = null;
-// An apworld the player chose to track with instead of the catalog's. Kept until they remove it.
+// An apworld the player chose to track with. Offered only once the room's datapackage has no match in
+// the catalog, and withdrawn when the connection details change.
+let uploadOffered = false;
 let apworldFile = null;
 const images = new Map();
 const markerNodes = new Map();
@@ -106,6 +108,7 @@ function renderRecent() {
       if (switching) stopTracking();
       fillFields(entry);
       abandonCheckedRoom();
+      withdrawUpload();
       if (switching) onConnect();
     });
     const li = document.createElement("li");
@@ -369,6 +372,7 @@ async function onConnect() {
   const attempt = ++checkAttempt;
   store(STORAGE_KEYS.fields, currentFields());
   ui.phase = "checking";
+  ui.error = null;
   $("connect").disabled = true;
   discardWorker();
   // Files picked for an earlier room may belong to a different game.
@@ -382,15 +386,19 @@ async function onConnect() {
     if (attempt !== checkAttempt) return;
     const checksum = roomInfo.datapackage_checksums?.[game];
     pending = { url, address, slot, password: password || null, game, checksum, entry: null, description: game };
-    if (apworldFile) return await inspectUpload(attempt);
 
     const candidates = catalog.games[game] ?? [];
-    if (!candidates.length) throw new Error(`${game} isn't in the tracker catalog.`);
     const matches = candidates.filter((candidate) => candidate.checksum === checksum);
     if (!matches.length) {
-      const known = candidates.map((candidate) => candidate.version).join(", ");
-      throw new Error(`No ${game} version in the catalog matches this room's datapackage (${String(checksum).slice(0, 12)}…). Known versions: ${known}.`);
+      if (apworldFile) return await inspectUpload(attempt);
+      offerUpload();
+      if (!candidates.length) throw new Error(`${game} isn't in the tracker catalog. If you have its apworld, you can use it instead.`);
+      // The catalog lists newest first; people read version lists oldest first.
+      const known = [...new Set(candidates.map((candidate) => candidate.version))].reverse().join(", ");
+      throw new Error(`No ${game} version in the catalog matches this room's datapackage (${String(checksum).slice(0, 12)}…). Known versions: ${known}. If you have the apworld the room was generated with, you can use it instead.`);
     }
+    withdrawUpload();
+    // The catalog sorts each game's versions newest first, numerically, so this is the latest match.
     const entry = matches[0];
     if (entry.disableUt) throw new Error(`The author of ${game} has asked Universal Tracker not to track it.`);
 
@@ -650,10 +658,22 @@ $("streamer").addEventListener("change", (event) => {
   $("log-lines").replaceChildren(...ui.logs.map(logLine));
 });
 function showApworldChoice() {
-  $("apworld-button").hidden = Boolean(apworldFile);
+  $("apworld-button").hidden = !uploadOffered || Boolean(apworldFile);
   $("apworld-choice").hidden = !apworldFile;
   $("apworld-name").textContent = apworldFile ? `Using ${apworldFile.name}` : "";
 }
+
+function offerUpload() {
+  uploadOffered = true;
+  showApworldChoice();
+}
+
+function withdrawUpload() {
+  uploadOffered = false;
+  apworldFile = null;
+  showApworldChoice();
+}
+
 $("apworld-button").addEventListener("click", () => $("apworld").click());
 $("apworld").addEventListener("change", (event) => {
   apworldFile = event.target.files[0] ?? null;
@@ -661,6 +681,8 @@ $("apworld").addEventListener("change", (event) => {
   event.target.value = "";
   showApworldChoice();
   abandonCheckedRoom();
+  // The file answers the room check that just failed, so check again with it.
+  if (apworldFile && !isTracking()) onConnect();
 });
 $("apworld-clear").addEventListener("click", () => {
   apworldFile = null;
@@ -672,6 +694,7 @@ for (const id of ["address", "slot", "password"]) {
   $(id).addEventListener("input", () => {
     store(STORAGE_KEYS.fields, currentFields());
     abandonCheckedRoom();
+    withdrawUpload();
   });
 }
 $("start").addEventListener("click", () => startTracking().catch((err) => setStatus("down", err.message, { error: true })));

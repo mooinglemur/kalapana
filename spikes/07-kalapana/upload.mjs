@@ -1,25 +1,28 @@
-// Uploaded apworld check: track a slot with an apworld file instead of the catalog's, or confirm an
-// unusable apworld is refused with a message.
-// Usage: node upload.mjs <base url> <room address> <slot> <apworld> <screenshot dir>
-//          [--yaml file] [--pack file] [--expect-fail text] [--insecure]
+// Uploaded apworld check. By default the room's datapackage must have no catalog match, so the page
+// offers "Use my apworld", and the given apworld is chosen from there. With --expect-catalog, the
+// catalog must match and no offer may appear.
+// Usage: node upload.mjs <base url> <room address> <slot> <apworld|-> <screenshot dir>
+//          [--yaml file] [--pack file] [--expect-fail text] [--expect-catalog] [--insecure]
 import puppeteer from "puppeteer-core";
 import { mkdir } from "node:fs/promises";
 import { basename } from "node:path";
 
+const BOOLEAN_OPTIONS = new Set(["insecure", "expect-catalog"]);
 const positional = [];
 const options = {};
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
   if (!argv[i].startsWith("--")) positional.push(argv[i]);
-  else if (argv[i] === "--insecure") options.insecure = true;
+  else if (BOOLEAN_OPTIONS.has(argv[i].slice(2))) options[argv[i].slice(2)] = true;
   else options[argv[i].slice(2)] = argv[++i];
 }
 const [base, address, slot, apworld, shotDir] = positional;
 if (!shotDir) {
-  console.error("usage: node upload.mjs <base url> <room address> <slot> <apworld> <screenshot dir> [--yaml file] [--pack file] [--expect-fail text] [--insecure]");
+  console.error("usage: node upload.mjs <base url> <room address> <slot> <apworld|-> <screenshot dir> [--yaml file] [--pack file] [--expect-fail text] [--expect-catalog] [--insecure]");
   process.exit(2);
 }
 await mkdir(shotDir, { recursive: true });
+const label = options["expect-catalog"] ? `${slot}-catalog` : basename(apworld);
 
 const started = Date.now();
 const say = (...parts) => console.log(`[${((Date.now() - started) / 1000).toFixed(1).padStart(5)}s]`, ...parts);
@@ -28,7 +31,7 @@ const browser = await puppeteer.launch({
   browser: "chrome",
   executablePath: "/usr/bin/google-chrome-stable",
   headless: true,
-  protocolTimeout: 300_000,
+  protocolTimeout: 120_000,
   args: options.insecure ? ["--ignore-certificate-errors"] : [],
 });
 let exitCode = 0;
@@ -38,28 +41,45 @@ try {
   page.on("pageerror", (err) => say(`[pageerror] ${err.message}`));
   page.on("console", (msg) => ["error", "warning"].includes(msg.type()) && say(`[console ${msg.type()}] ${msg.text().slice(0, 300)}`));
 
+  const status = () => page.evaluate(() => ({
+    phase: window.kalapanaState.phase,
+    connection: window.kalapanaState.connection,
+    entry: window.kalapanaState.entry,
+    offered: !document.getElementById("apworld-button").hidden,
+  }));
+  // Settles on a new phase, or on a refusal whose message differs from `previous`.
+  const settle = (previous) => page.waitForFunction(
+    (prev) => ["files", "booting", "tracking"].includes(window.kalapanaState.phase)
+      || (window.kalapanaState.phase === "ready" && window.kalapanaState.connection.state === "down" && window.kalapanaState.connection.text !== prev),
+    { timeout: 60_000 },
+    previous,
+  );
+
   await page.goto(`${base}/?${new URLSearchParams({ address, slot })}`);
   await page.waitForFunction(() => window.kalapanaState.phase === "ready", { timeout: 30_000 });
-  await (await page.$("#apworld")).uploadFile(apworld);
-  say("chosen:", await page.$eval("#apworld-name", (node) => node.textContent));
+  let current = await status();
+  if (current.offered) throw new Error("the apworld option is shown before any room check");
 
   await page.click("#connect");
-  // The page's CSP blocks eval, so wait predicates must be plain functions.
-  await page.waitForFunction(
-    () => ["files", "booting", "tracking"].includes(window.kalapanaState.phase)
-      || (window.kalapanaState.phase === "ready" && window.kalapanaState.connection.state === "down"),
-    { timeout: 60_000 },
-  ).catch(async (err) => {
-    throw new Error(`${err.message}; state ${JSON.stringify(await page.evaluate(() => ({ phase: window.kalapanaState.phase, connection: window.kalapanaState.connection })))}`);
-  });
-  const status = () => page.evaluate(() => ({ phase: window.kalapanaState.phase, connection: window.kalapanaState.connection, entry: window.kalapanaState.entry }));
-  let current = await status();
-  say("after inspection:", JSON.stringify(current));
+  await settle("");
+  current = await status();
+  say("first check:", JSON.stringify(current));
+
+  if (options["expect-catalog"]) {
+    if (current.offered || current.entry?.source === "upload") throw new Error("expected the catalog to match without an apworld offer");
+  } else {
+    if (!current.offered || current.connection.state !== "down") throw new Error("expected an apworld offer after no catalog match");
+    // Choosing the file checks the room again with it.
+    await (await page.$("#apworld")).uploadFile(apworld);
+    await settle(current.connection.text);
+    current = await status();
+    say("with apworld:", JSON.stringify(current));
+  }
 
   if (options["expect-fail"]) {
     const logs = await page.evaluate(() => window.kalapanaState.logs.map((line) => `${line.level}: ${line.text}`));
-    for (const line of logs) say("  log", line.split("\n").slice(-3).join(" | ").slice(0, 600));
-    await page.screenshot({ path: `${shotDir}/${basename(apworld)}-refused.png` });
+    for (const line of logs) say("  log", line.split("\n").slice(-2).join(" | ").slice(0, 400));
+    await page.screenshot({ path: `${shotDir}/${label}-refused.png` });
     if (current.connection.state !== "down" || !`${current.connection.text}\n${logs.join("\n")}`.includes(options["expect-fail"])) {
       throw new Error(`expected a refusal mentioning "${options["expect-fail"]}"`);
     }
@@ -73,20 +93,20 @@ try {
     }
     await page.waitForFunction(
       () => (window.kalapanaState.connection.state === "up" && window.kalapanaState.trackerLines.length > 0) || window.kalapanaState.error,
-      { timeout: 120_000 },
+      { timeout: 60_000 },
     );
     const summary = await page.evaluate(() => ({
       error: window.kalapanaState.error,
       message: document.getElementById("message").textContent,
-      entry: window.kalapanaState.entry,
-      bootTimings: window.kalapanaState.bootTimings,
+      source: window.kalapanaState.entry?.source,
+      version: window.kalapanaState.entry?.version,
       inLogic: window.kalapanaState.labels.tracker_logic_locs_label,
       trackerLines: window.kalapanaState.trackerLines.length,
       maps: window.kalapanaState.maps.length,
       logErrors: window.kalapanaState.logs.filter((line) => line.level === "ERROR").map((line) => line.text.slice(0, 300)),
     }));
-    say("summary:", JSON.stringify(summary, null, 2));
-    await page.screenshot({ path: `${shotDir}/${basename(apworld)}-tracking.png` });
+    say("summary:", JSON.stringify(summary));
+    await page.screenshot({ path: `${shotDir}/${label}-tracking.png` });
     if (summary.error) throw new Error(summary.error);
   }
 } catch (err) {
