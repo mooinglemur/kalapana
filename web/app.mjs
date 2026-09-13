@@ -676,6 +676,7 @@ function onWorkerMessage({ data }) {
         renderMarkup(li, line);
         return li;
       }));
+      applyTrackerFilter();
       break;
     case "label": {
       ui.labels[message.name] = message.text;
@@ -721,6 +722,24 @@ function showTab(name) {
 }
 
 document.querySelectorAll(".tabs button").forEach((button) => button.addEventListener("click", () => showTab(button.dataset.tab)));
+
+// Puna's filter semantics: a trimmed, case-insensitive substring of each line's rendered text, so what
+// you can see is what you can search. Applied again whenever the tracker redraws its lines.
+function applyTrackerFilter() {
+  const needle = $("tracker-filter").value.trim().toLowerCase();
+  for (const line of $("tracker-lines").children) {
+    line.hidden = needle !== "" && !line.textContent.toLowerCase().includes(needle);
+  }
+}
+
+$("tracker-filter").addEventListener("input", applyTrackerFilter);
+// Not every browser clears a search field on Escape by itself.
+$("tracker-filter").addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !event.target.value) return;
+  event.preventDefault();
+  event.target.value = "";
+  applyTrackerFilter();
+});
 $("address").addEventListener("focus", showAddress);
 $("address").addEventListener("blur", showAddress);
 // Registered before the shared listener below, which saves the fields.

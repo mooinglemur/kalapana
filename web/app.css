@@ -201,6 +201,7 @@ label {
 
 input[type="text"],
 input[type="password"],
+input[type="search"],
 select {
   font: inherit;
   padding: 0.4rem 0.5rem;
@@ -388,6 +389,21 @@ button:disabled, input:disabled { opacity: 0.6; cursor: default; }
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+/* Puna's table filter box. */
+.table-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+
+.table-search {
+  width: 100%;
+  max-width: 22rem;
+  margin: 0;
+  box-sizing: border-box;
 }
 
 .labels {
