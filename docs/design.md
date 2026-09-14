@@ -200,6 +200,8 @@ Until then, the page accepts `?address=&slot=` in the query string. It never acc
 ## Known limitations
 
 - **Native dependencies.** Worlds needing native packages fail analysis and don't appear in the catalog (for example soe, which the index also disables).
+  - **Stand-ins:** `runtime/native_stubs.py` provides `dolphin_memory_engine` and `tkinter`, which some apworlds import only for their game clients. Imports succeed, and anything called raises (`tkinter.TclError` for tkinter, which AP's dialog helpers treat as "no GUI"). This brought in Luigi's Mansion, PokePark, Minecraft Dig and Oracle of Ages, whose imports touch nothing from those modules while loading.
+  - **Still failing:** Zillion and Super Junkoid need their randomizer libraries (`zilliandomizer`, `super_junkoid_randomizer`) to build their tables, and Clair Obscur needs `maseya`.
 - **Rooms without TLS** can't be reached from an https page.
 - **No saved library yet.** The test instance doesn't keep uploaded YAMLs and packs between visits. OPFS persistence was proven in the spikes but isn't wired in.
 - **Missing UI.** No hints tab, command autocomplete, map groups or location icons yet.

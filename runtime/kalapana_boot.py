@@ -43,6 +43,10 @@ def prepare() -> None:
 
         sys.modules["ssl"] = ssl_stub
 
+    import native_stubs
+
+    native_stubs.install()
+
     # A missing Players folder makes settings fall back to a native folder dialog.
     os.makedirs(os.path.join(AP_ROOT, "Players"), exist_ok=True)
     os.makedirs(os.path.join(AP_ROOT, "custom_worlds"), exist_ok=True)
