@@ -1,8 +1,26 @@
 // Builds catalog.json: what the browser needs to pick and load bundles for a room.
-import { config } from "./config.mjs";
 import { compareVersions } from "./semver.mjs";
 
-export function buildCatalog({ core, tracker, items }) {
+// The runtime half of a catalog: the pinned versions and the core and tracker bundles.
+function runtimeFields({ inputs, core, tracker }) {
+  return {
+    archipelagoVersion: inputs.archipelago.version,
+    pyodide: {
+      version: inputs.pyodide.version,
+      base: `/runtime/pyodide-${inputs.pyodide.version}/`,
+      // Every vendored package, for an apworld the player supplies, which hasn't been analyzed.
+      packages: inputs.pyodide.packages,
+    },
+    core: { bundle: `/bundles/core/${core.key}.zip`, packages: core.result.packages },
+    tracker: {
+      version: inputs.tracker.version,
+      bundle: `/bundles/worlds/${tracker.analysisKey}.zip`,
+      packages: tracker.analysis.packages,
+    },
+  };
+}
+
+export function buildCatalog({ inputs, core, tracker, items }) {
   const games = {};
   for (const item of items) {
     const analysis = item.analysis;
@@ -31,19 +49,21 @@ export function buildCatalog({ core, tracker, items }) {
   return {
     schema: 1,
     generatedAt: new Date().toISOString(),
-    archipelagoVersion: config.inputs.archipelago.version,
-    pyodide: {
-      version: config.inputs.pyodide.version,
-      base: `/runtime/pyodide-${config.inputs.pyodide.version}/`,
-      // Every vendored package, for an apworld the player supplies, which hasn't been analyzed.
-      packages: config.inputs.pyodide.packages,
-    },
-    core: { bundle: `/bundles/core/${core.key}.zip`, packages: core.result.packages },
-    tracker: {
-      version: config.inputs.tracker.version,
-      bundle: `/bundles/worlds/${tracker.analysisKey}.zip`,
-      packages: tracker.analysis.packages,
-    },
+    ...runtimeFields({ inputs, core, tracker }),
     games,
   };
+}
+
+// The previous catalog's games with a new core and tracker, or null when that mix isn't safe: world
+// bundles are compiled for the pinned Archipelago and Pyodide versions, so those must be unchanged.
+export function catalogWithRuntime(previous, { inputs, core, tracker }) {
+  const runtime = runtimeFields({ inputs, core, tracker });
+  if (
+    previous?.schema !== 1 ||
+    previous.archipelagoVersion !== runtime.archipelagoVersion ||
+    previous.pyodide?.version !== runtime.pyodide.version
+  ) {
+    return null;
+  }
+  return { ...previous, ...runtime };
 }

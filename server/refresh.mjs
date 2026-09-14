@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { buildCatalog } from "./catalog.mjs";
+import { buildCatalog, catalogWithRuntime } from "./catalog.mjs";
 import { config } from "./config.mjs";
 import { exists, publishDirectory, readJson, writeFileAtomic } from "./fsutil.mjs";
 import { Lease } from "./lease.mjs";
@@ -134,6 +134,7 @@ async function refreshOnce(lease) {
     if (!tracker.analysis.ok) throw new Error(`tracker.apworld failed analysis: ${tracker.analysis.error}`);
 
     log(`tracker ${tracker.version} ready`);
+    await publishRuntime(lease, core, tracker);
 
     status.phase = "index";
     const indexStarted = Date.now();
@@ -207,7 +208,7 @@ async function refreshOnce(lease) {
     log(`analysis done: ${describeAnalysis()} (${secondsSince(analyzeStarted)}s)`);
 
     status.phase = "publish";
-    const catalog = buildCatalog({ core, tracker, items });
+    const catalog = buildCatalog({ inputs: config.inputs, core, tracker, items });
     await writeFileAtomic(paths.catalog(), JSON.stringify(catalog));
     const summary = {
       publishedAt: catalog.generatedAt,
@@ -230,6 +231,18 @@ async function refreshOnce(lease) {
     Object.assign(status, { running: false, phase: "idle", finishedAt: new Date().toISOString() });
     await rm(work, { recursive: true, force: true });
   }
+}
+
+// Points the existing catalog at the new core and tracker bundles as soon as they exist. A new image
+// serves its page immediately, and without this that page would run against the previous image's
+// runtime until the whole index had been processed.
+async function publishRuntime(lease, core, tracker) {
+  const previous = await readJson(paths.catalog(), null);
+  const updated = previous && catalogWithRuntime(previous, { inputs: config.inputs, core, tracker });
+  if (!updated || lease.lost) return;
+  if (updated.core.bundle === previous.core?.bundle && updated.tracker.bundle === previous.tracker?.bundle) return;
+  await writeFileAtomic(paths.catalog(), JSON.stringify(updated));
+  log("catalog now uses the new core and tracker bundles; games follow when this refresh finishes");
 }
 
 async function fetchIndex(work) {

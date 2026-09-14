@@ -149,6 +149,8 @@ analysis-v1/<key>/            bundle.zip, result.json (key = hash of analyzer co
 }
 ```
 
+**Publishing in two steps.** A new image serves its page as soon as its pod starts, but a refresh can take many minutes. So once the new core and tracker bundles are ready, the refresh first republishes the existing catalog pointing at them, keeping its games, and publishes the full catalog at the end. The early step is skipped when the pinned Archipelago or Pyodide version changed, since world bundles are compiled for those.
+
 **Checksum ambiguity.** Entries are sorted newest first. A datapackage checksum only covers item and location names and ids, so versions that changed logic without renaming anything share a checksum (ANIMAL WELL 0.5.0 and 0.5.2 do). The browser takes the newest match. That may not be the version the room generated with; the room's apworld version isn't available anywhere the browser can see.
 
 ## Container and deployment
