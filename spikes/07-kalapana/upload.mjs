@@ -1,6 +1,7 @@
-// Uploaded apworld check. By default the room's datapackage must have no catalog match, so the page
-// offers "Use my apworld", and the given apworld is chosen from there. With --expect-catalog, the
-// catalog must match and no offer may appear.
+// Uploaded apworld check. The page offers "Use my apworld" once Connect has checked the room, whether or
+// not the catalog matches. The given apworld is then chosen, which checks the room again with it, leaving
+// a tracker already running on the catalog's version. With --expect-catalog, the first check must pick
+// the catalog's version.
 // Usage: node upload.mjs <base url> <room address> <slot> <apworld|-> <screenshot dir>
 //          [--yaml file] [--pack file] [--expect-fail text] [--expect-catalog] [--insecure]
 import puppeteer from "puppeteer-core";
@@ -64,14 +65,21 @@ try {
   await settle("");
   current = await status();
   say("first check:", JSON.stringify(current));
+  if (!current.offered) throw new Error("expected an apworld offer after the room check");
+  if (options["expect-catalog"] && (current.connection.state === "down" || current.entry?.source === "upload")) {
+    throw new Error("expected the catalog to match");
+  }
 
-  if (options["expect-catalog"]) {
-    if (current.offered || current.entry?.source === "upload") throw new Error("expected the catalog to match without an apworld offer");
-  } else {
-    if (!current.offered || current.connection.state !== "down") throw new Error("expected an apworld offer after no catalog match");
+  if (apworld !== "-") {
     // Choosing the file checks the room again with it.
+    const previous = current.connection.text;
     await (await page.$("#apworld")).uploadFile(apworld);
-    await settle(current.connection.text);
+    await page.waitForFunction(
+      (prev) => (window.kalapanaState.entry?.source === "upload" && ["files", "booting", "tracking"].includes(window.kalapanaState.phase))
+        || (window.kalapanaState.phase === "ready" && window.kalapanaState.connection.state === "down" && window.kalapanaState.connection.text !== prev),
+      { timeout: 60_000 },
+      previous,
+    );
     current = await status();
     say("with apworld:", JSON.stringify(current));
   }

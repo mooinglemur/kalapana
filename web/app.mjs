@@ -25,8 +25,9 @@ const ui = (window.kalapanaState = {
 let catalog = null;
 let pending = null;
 let worker = null;
-// An apworld the player chose to track with. Offered only once the room's datapackage has no match in
-// the catalog, and withdrawn when the connection details change.
+// An apworld the player chose to track with. Offered once a room check has found the slot's game, whether
+// or not the catalog matches, so a newer apworld with the same datapackage but different logic can be used.
+// A chosen file takes precedence over the catalog. Withdrawn when the connection details change.
 let uploadOffered = false;
 let apworldFile = null;
 const images = new Map();
@@ -456,17 +457,16 @@ async function onConnect() {
       checksums: roomInfo.datapackage_checksums ?? {},
     };
 
+    offerUpload();
+    if (apworldFile) return await inspectUpload(attempt);
     const candidates = catalog.games[game] ?? [];
     const matches = candidates.filter((candidate) => candidate.checksum === checksum);
     if (!matches.length) {
-      if (apworldFile) return await inspectUpload(attempt);
-      offerUpload();
       if (!candidates.length) throw new Error(`${game} isn't in the tracker catalog. If you have its apworld, you can use it instead.`);
       // The catalog lists newest first; people read version lists oldest first.
       const known = [...new Set(candidates.map((candidate) => candidate.version))].reverse().join(", ");
       throw new Error(`No ${game} version in the catalog matches this room's datapackage (${String(checksum).slice(0, 12)}…). Known versions: ${known}. If you have the apworld the room was generated with, you can use it instead.`);
     }
-    withdrawUpload();
     // The catalog sorts each game's versions newest first, numerically, so this is the latest match.
     const entry = matches[0];
     if (entry.disableUt) throw new Error(`The author of ${game} has asked Universal Tracker not to track it.`);
@@ -485,7 +485,8 @@ async function onConnect() {
   }
 }
 
-const LOCKED_WHILE_TRACKING = ["address", "slot", "password", "apworld-button", "apworld-clear"];
+// The apworld controls stay usable: choosing or removing one while tracking switches to it.
+const LOCKED_WHILE_TRACKING = ["address", "slot", "password"];
 
 async function startTracking() {
   const { entry } = pending;
@@ -786,20 +787,26 @@ function withdrawUpload() {
   showApworldChoice();
 }
 
+// Checks the room again with the current choice, leaving a running tracker first.
+function recheckWithChoice() {
+  if (isTracking()) stopTracking();
+  else abandonCheckedRoom();
+  onConnect();
+}
+
 $("apworld-button").addEventListener("click", () => $("apworld").click());
 $("apworld").addEventListener("change", (event) => {
   apworldFile = event.target.files[0] ?? null;
   // Cleared so that choosing the same file again still counts as a change.
   event.target.value = "";
   showApworldChoice();
-  abandonCheckedRoom();
-  // The file answers the room check that just failed, so check again with it.
-  if (apworldFile && !isTracking()) onConnect();
+  if (apworldFile) recheckWithChoice();
 });
 $("apworld-clear").addEventListener("click", () => {
   apworldFile = null;
   showApworldChoice();
-  abandonCheckedRoom();
+  // After a Disconnect there is nothing to switch back from, so removing only clears the choice.
+  if (isTracking() || pending) recheckWithChoice();
 });
 $("connect-form").addEventListener("submit", onSubmit);
 for (const id of ["address", "slot", "password"]) {
