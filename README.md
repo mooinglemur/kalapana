@@ -19,7 +19,7 @@ only serves files and keeps a catalog of apworld bundles built from the curated
   - which Pyodide packages it needs.
 
   It also produces a precompiled bundle of the world.
-- **Browser.** The page opens a short connection to the room to read its datapackage checksums, picks the matching world bundle from the catalog, asks for a YAML or pack if the world needs one, then runs the tracker in a Web Worker. Once the room is checked, a player can use their own `.apworld` instead of the catalog's, for a room no catalog version matches or for a newer version with different logic, even while tracking. It is checked against the room's game and datapackage in the browser and never uploaded to the server. Dropped connections are retried with backoff, but not while the tab is hidden. The last connection details and a short Recent list are kept in localStorage.
+- **Browser.** The page opens a short connection to the room to read its datapackage checksums, picks the matching world bundle from the catalog, asks for a YAML or pack if the world needs one, then runs the tracker in a Web Worker. A player can use their own `.apworld` instead of the catalog's at any time, even while tracking, for a room no catalog version matches or for a newer version with different logic. It is checked against the room's game and datapackage in the browser and never uploaded to the server. Dropped connections are retried with backoff, but not while the tab is hidden. The last connection details and a short Recent list are kept in localStorage.
 
 ## Configuration
 

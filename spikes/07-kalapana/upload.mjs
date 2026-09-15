@@ -1,7 +1,6 @@
-// Uploaded apworld check. The page offers "Use my apworld" once Connect has checked the room, whether or
-// not the catalog matches. The given apworld is then chosen, which checks the room again with it, leaving
-// a tracker already running on the catalog's version. With --expect-catalog, the first check must pick
-// the catalog's version.
+// Uploaded apworld check. The page always offers "Use my apworld". Connect checks the room first; the
+// given apworld is then chosen, which checks the room again with it, leaving a tracker already running on
+// the catalog's version. With --expect-catalog, the first check must pick the catalog's version.
 // Usage: node upload.mjs <base url> <room address> <slot> <apworld|-> <screenshot dir>
 //          [--yaml file] [--pack file] [--expect-fail text] [--expect-catalog] [--insecure]
 import puppeteer from "puppeteer-core";
@@ -59,7 +58,7 @@ try {
   await page.goto(`${base}/?${new URLSearchParams({ address, slot })}`);
   await page.waitForFunction(() => window.kalapanaState.phase === "ready", { timeout: 30_000 });
   let current = await status();
-  if (current.offered) throw new Error("the apworld option is shown before any room check");
+  if (!current.offered) throw new Error("expected the apworld option before any room check");
 
   await page.click("#connect");
   await settle("");

@@ -25,10 +25,9 @@ const ui = (window.kalapanaState = {
 let catalog = null;
 let pending = null;
 let worker = null;
-// An apworld the player chose to track with. Offered once a room check has found the slot's game, whether
-// or not the catalog matches, so a newer apworld with the same datapackage but different logic can be used.
-// A chosen file takes precedence over the catalog. Withdrawn when the connection details change.
-let uploadOffered = false;
+// An apworld the player chose to track with, always offered. It takes precedence over the catalog, so a
+// newer apworld with the same datapackage but different logic can be used. Cleared by picking another
+// Recent connection, which is usually another game.
 let apworldFile = null;
 const images = new Map();
 const markerNodes = new Map();
@@ -111,7 +110,8 @@ function renderRecent() {
       if (switching) stopTracking();
       fillFields(entry);
       abandonCheckedRoom();
-      withdrawUpload();
+      apworldFile = null;
+      showApworldChoice();
       if (switching) onConnect();
     });
     const li = document.createElement("li");
@@ -366,7 +366,7 @@ function askForFiles(entry) {
   $("yaml-field").hidden = !entry.needsYaml;
   $("pack-field").hidden = !entry.map?.externalPack;
   $("files").hidden = false;
-  const asks = [entry.needsYaml && "your player YAML", entry.map?.externalPack && "optionally its poptracker pack for the map"].filter(Boolean);
+  const asks = [entry.needsYaml && "your player YAML", entry.map?.externalPack && "(optionally) its PopTracker pack for the map"].filter(Boolean);
   setStatus("idle", `${pending.description}. Add ${asks.join(" and ")}, then start tracking.`);
   ui.phase = "files";
   $("connect").disabled = false;
@@ -457,7 +457,6 @@ async function onConnect() {
       checksums: roomInfo.datapackage_checksums ?? {},
     };
 
-    offerUpload();
     if (apworldFile) return await inspectUpload(attempt);
     const candidates = catalog.games[game] ?? [];
     const matches = candidates.filter((candidate) => candidate.checksum === checksum);
@@ -771,20 +770,9 @@ $("streamer").addEventListener("change", (event) => {
   $("log-lines").replaceChildren(...ui.logs.map(logLine));
 });
 function showApworldChoice() {
-  $("apworld-button").hidden = !uploadOffered || Boolean(apworldFile);
+  $("apworld-button").hidden = Boolean(apworldFile);
   $("apworld-choice").hidden = !apworldFile;
   $("apworld-name").textContent = apworldFile ? `Using ${apworldFile.name}` : "";
-}
-
-function offerUpload() {
-  uploadOffered = true;
-  showApworldChoice();
-}
-
-function withdrawUpload() {
-  uploadOffered = false;
-  apworldFile = null;
-  showApworldChoice();
 }
 
 // Checks the room again with the current choice, leaving a running tracker first.
@@ -800,7 +788,9 @@ $("apworld").addEventListener("change", (event) => {
   // Cleared so that choosing the same file again still counts as a change.
   event.target.value = "";
   showApworldChoice();
-  if (apworldFile) recheckWithChoice();
+  // Check the room with the file straight away when there is a room to check; otherwise Connect will.
+  const { address, slot } = currentFields();
+  if (apworldFile && address && slot) recheckWithChoice();
 });
 $("apworld-clear").addEventListener("click", () => {
   apworldFile = null;
@@ -813,7 +803,6 @@ for (const id of ["address", "slot", "password"]) {
   $(id).addEventListener("input", () => {
     store(STORAGE_KEYS.fields, currentFields());
     abandonCheckedRoom();
-    withdrawUpload();
   });
 }
 $("start").addEventListener("click", () => startTracking().catch((err) => setStatus("down", err.message, { error: true })));
