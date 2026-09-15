@@ -43,9 +43,11 @@ def prepare() -> None:
 
         sys.modules["ssl"] = ssl_stub
 
+    import bundled_libraries
     import native_stubs
 
     native_stubs.install()
+    bundled_libraries.install()
 
     # A missing Players folder makes settings fall back to a native folder dialog.
     os.makedirs(os.path.join(AP_ROOT, "Players"), exist_ok=True)

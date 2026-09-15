@@ -202,7 +202,7 @@ Until then, the page accepts `?address=&slot=` in the query string. It never acc
 - **Native dependencies.** Worlds needing native packages fail analysis and don't appear in the catalog (for example soe, which the index also disables).
   - **Stand-ins:** `runtime/native_stubs.py` provides `dolphin_memory_engine` and `tkinter`, which some apworlds import only for their game clients. Imports succeed, and anything called raises (`tkinter.TclError` for tkinter, which AP's dialog helpers treat as "no GUI"). This brought in Luigi's Mansion, PokePark, Minecraft Dig and Oracle of Ages, whose imports touch nothing from those modules while loading.
   - **Vendored for worlds:** `maseya-z3pr` (a PyPI wheel, for Clair Obscur) and `zilliandomizer` (source at the commit AP's Zillion requires, since it isn't on PyPI) are pure Python and ship in the core bundle.
-  - **Still failing:** Super Junkoid bundles `super_junkoid_randomizer` inside its apworld and only exposes it when loaded as a zipped `.apworld`, which the analyzer's unpacked folder isn't.
+  - **Libraries an apworld ships:** Super Junkoid carries `super_junkoid_randomizer` in its own folder and imports it by its top-level name, which desktop AP arranges by extracting it from the zipped `.apworld`. `runtime/bundled_libraries.py` answers such an import from a world's folder, but only when that world's `requirements.txt` names the package.
 - **Rooms without TLS** can't be reached from an https page.
 - **No saved library yet.** The test instance doesn't keep uploaded YAMLs and packs between visits. OPFS persistence was proven in the spikes but isn't wired in.
 - **Missing UI.** No hints tab, command autocomplete, map groups or location icons yet.
