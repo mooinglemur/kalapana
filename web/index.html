@@ -47,7 +47,7 @@
 
   <main>
     <form id="connect-form" class="connect" autocomplete="off">
-      <label>Server <input id="address" type="text" required placeholder="mw.ionium.us:50000" spellcheck="false"></label>
+      <label>Server <input id="address" type="text" required placeholder="archipelago.gg:##### / mw.ionium.us:#####" spellcheck="false"></label>
       <label>Slot <input id="slot" type="text" required spellcheck="false"></label>
       <label>Password <input id="password" type="password"></label>
       <input id="apworld" type="file" accept=".apworld" hidden>
@@ -79,7 +79,7 @@
 
     <div class="segmented tabs" role="group" aria-label="View">
       <button type="button" data-tab="tracker" aria-pressed="true">Tracker</button>
-      <button type="button" data-tab="map" aria-pressed="false">Map</button>
+      <button id="map-tab" type="button" data-tab="map" aria-pressed="false" hidden>Map</button>
       <button type="button" data-tab="log" aria-pressed="false">Log</button>
     </div>
 

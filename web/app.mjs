@@ -552,6 +552,7 @@ function resetView({ clearLog = false } = {}) {
   $("current-map").textContent = "";
   $("map").replaceChildren();
   $("map").removeAttribute("viewBox");
+  setMapTabShown(false);
   $("command").value = "";
   $("command").disabled = true;
   commandNames = null;
@@ -698,6 +699,7 @@ function onWorkerMessage({ data }) {
     case "show_map":
       ui.maps = message.maps;
       $("map-select").replaceChildren(...message.maps.map((name) => new Option(name, name)));
+      setMapTabShown(message.maps.length > 0);
       break;
     case "current_map":
       $("current-map").textContent = message.name;
@@ -725,6 +727,12 @@ function showTab(name) {
   for (const tab of ["tracker", "map", "log"]) $(`tab-${tab}`).hidden = tab !== name;
   // A hidden list loses its scroll position, so the log reopens at its newest line.
   if (name === "log") $("log-lines").scrollTop = $("log-lines").scrollHeight;
+}
+
+// The Map tab exists only while UT has a map loaded, from the world or a pack.
+function setMapTabShown(shown) {
+  $("map-tab").hidden = !shown;
+  if (!shown && !$("tab-map").hidden) showTab("tracker");
 }
 
 document.querySelectorAll(".tabs button").forEach((button) => button.addEventListener("click", () => showTab(button.dataset.tab)));
