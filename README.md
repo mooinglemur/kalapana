@@ -66,4 +66,4 @@ Requires Node 26: the analyzer sandbox relies on the permission model's `--allow
 
 ## Updating pinned versions
 
-`deploy/inputs.json` pins the Archipelago release (it must match the index's `archipelago_version`), Pyodide, Universal Tracker, and the pure-Python wheels, all by sha256. A refresh fails loudly if the index moves to a different Archipelago version than the image has.
+`deploy/inputs.json` pins the Archipelago release (it must match the index's `archipelago_version`), Pyodide, Universal Tracker, the pure-Python wheels, and pure-Python packages only published as source (a `sources` entry names the tarball and the package directory inside it), all by sha256. A refresh fails loudly if the index moves to a different Archipelago version than the image has.

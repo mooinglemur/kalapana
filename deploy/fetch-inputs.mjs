@@ -2,7 +2,7 @@
 // Needs `tar` and `bzip2` on PATH. Usage: node deploy/fetch-inputs.mjs <vendor dir>
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -85,6 +85,22 @@ for (const wheel of inputs.wheels) {
   const name = basename(new URL(wheel.url).pathname);
   console.log(`  ${name}`);
   await writeFile(join(wheelDir, name), await download(wheel.url, wheel.sha256));
+}
+
+// Pure-Python packages published only as source, such as a git commit a world requires. Only the
+// package directory is kept.
+const sourceDir = join(dest, "sources");
+await rm(sourceDir, { recursive: true, force: true });
+await mkdir(sourceDir, { recursive: true });
+for (const source of inputs.sources ?? []) {
+  console.log(`  ${source.name}`);
+  const archive = join(dest, `${source.name}.tar.gz`);
+  const unpacked = join(dest, `${source.name}-source`);
+  await writeFile(archive, await download(source.url, source.sha256));
+  await extract(archive, "-xzf", unpacked);
+  await rename(join(unpacked, source.package), join(sourceDir, basename(source.package)));
+  await rm(archive);
+  await rm(unpacked, { recursive: true, force: true });
 }
 
 await writeFile(join(dest, "inputs.json"), JSON.stringify(inputs, null, 2) + "\n");

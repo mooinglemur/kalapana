@@ -40,6 +40,18 @@
     {
       "url": "https://files.pythonhosted.org/packages/ef/3c/2c197d226f9ea224a9ab8d197933f9da0ae0aac5b6e0f884e2b8d9c8e9f7/pathspec-1.0.4-py3-none-any.whl",
       "sha256": "fb6ae2fd4e7c921a165808a552060e722767cfa526f99ca5156ed2ce45a5c723"
+    },
+    {
+      "url": "https://files.pythonhosted.org/packages/37/d3/d2748b1394caac3dede21512e1f68aa5a41209db41b49e54add5b2e521f3/maseya_z3pr-1.0.0rc1-py3-none-any.whl",
+      "sha256": "21a5611950be32d99dd5d855c0b28f4d97072f9e4b31bcdccdcc61b645a15bf0"
+    }
+  ],
+  "sources": [
+    {
+      "name": "zilliandomizer",
+      "url": "https://codeload.github.com/beauxq/zilliandomizer/tar.gz/96d9a20f8278cee64bb4db859fbd874e0f332d36",
+      "sha256": "ebe356a8f1447fb45566ba748a04587b52fd91ab67625d17a666486c5c2bc347",
+      "package": "src/zilliandomizer"
     }
   ]
 }

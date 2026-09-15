@@ -362,6 +362,7 @@ async function ensureCore(work) {
     mounts: {
       "/apsrc": join(config.vendorDir, "archipelago"),
       "/wheels": join(config.vendorDir, "wheels"),
+      "/sources": join(config.vendorDir, "sources"),
       "/runtime": config.runtimeDir,
     },
     timeoutMs: 600_000,

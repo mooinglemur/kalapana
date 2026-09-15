@@ -1,8 +1,8 @@
 """Builds the Archipelago core bundles from the pinned AP source mounted at /apsrc.
 
 core-src.zip keeps .py sources for the analyzer; core.zip holds precompiled .pyc for browsers.
-Both contain AP's core modules under ap/, and vendored wheels plus kalapana's runtime modules under
-site-packages/.
+Both contain AP's core modules under ap/, and vendored wheels, source packages and kalapana's runtime
+modules under site-packages/.
 """
 import os
 import shutil
@@ -49,6 +49,13 @@ def site_package_files():
             for info in archive.infolist():
                 if not info.is_dir() and ".dist-info/" not in info.filename:
                     yield f"site-packages/{info.filename}", archive.read(info)
+    # Source packages keep their data files, not just their modules.
+    for package in sorted(os.listdir("/sources")):
+        root = os.path.join("/sources", package)
+        for file in walk_files(root):
+            if "__pycache__" not in file.split(os.sep):
+                with open(file, "rb") as f:
+                    yield f"site-packages/{package}/{os.path.relpath(file, root)}", f.read()
     for name in sorted(os.listdir("/runtime")):
         if name.endswith(".py"):
             with open(os.path.join("/runtime", name), "rb") as f:
