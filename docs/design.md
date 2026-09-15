@@ -81,7 +81,7 @@ flowchart LR
   4. If the entry needs a YAML, require one; if its map needs an external pack, offer an optional upload.
   5. Start the worker.
 
-  The page follows puna's look, with its light, dark and system theme selector. Server, slot and password are kept in localStorage so a reload doesn't clear them. The last 5 distinct combinations that connected are offered in a Recent menu.
+  The page follows puna's look, with its light, dark and system theme selector. Server, slot and password are kept in localStorage so a reload doesn't clear them. The last 10 distinct combinations that connected are offered in a Recent menu.
 
   While a tracker runs, Connect becomes Disconnect. Disconnecting terminates the worker, so no Python state, uploaded file or map image carries over to the next room, slot or game, and the next Connect boots a fresh worker (about 2 seconds with the runtime cached). Picking a different Recent entry while tracking disconnects and connects to it; while idle it only fills the fields. A room check still in flight is ignored if the details change before it answers.
 

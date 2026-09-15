@@ -38,7 +38,7 @@ let markerBorder = 8;
 // connected are offered from the Recent menu. All of it stays in this browser's localStorage.
 
 const STORAGE_KEYS = { fields: "kalapana.connection", recent: "kalapana.recent" };
-const RECENT_MAX = 5;
+const RECENT_MAX = 10;
 
 function loadStored(key, fallback) {
   try {
@@ -923,6 +923,8 @@ function placeMenu(menuId, buttonId, align) {
     const menu = $(menuId);
     const left = align === "right" ? anchor.right - menu.offsetWidth : anchor.left;
     menu.style.top = `${anchor.bottom + 4}px`;
+    // A long Recent list scrolls rather than running past the bottom of a short window.
+    menu.style.maxHeight = `${window.innerHeight - anchor.bottom - 12}px`;
     menu.style.left = `${Math.max(8, Math.min(left, window.innerWidth - menu.offsetWidth - 8))}px`;
   });
 }
