@@ -933,6 +933,8 @@ try {
   const response = await fetch("/catalog.json", { cache: "no-cache" });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   catalog = await response.json();
+  $("version").textContent +=
+    `, Archipelago ${catalog.archipelagoVersion}, Universal Tracker ${catalog.tracker.version}, Pyodide ${catalog.pyodide.version}`;
   ui.phase = "ready";
   setStatus("idle", `Ready: ${Object.keys(catalog.games).length} games available for Archipelago ${catalog.archipelagoVersion}.`);
   $("connect").disabled = false;
