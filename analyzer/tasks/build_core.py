@@ -21,6 +21,8 @@ EXCLUDED_WORLD_SUPPORT = {"_sc2common"}
 
 
 def core_files():
+    # CommonClient's /license reads it from AP's root.
+    yield "ap/LICENSE", "/apsrc/LICENSE"
     for name in sorted(os.listdir("/apsrc")):
         path = os.path.join("/apsrc", name)
         if os.path.isfile(path) and name.endswith(".py") and name not in EXCLUDED_MODULES:
