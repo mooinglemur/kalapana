@@ -476,8 +476,9 @@ class BrowserTrackerContext(TrackerGameContext):
         """The names the page suggests while a command is typed, sent once per generated multiworld.
 
         Each list is what that command matches against: the server's !hint and !hint_location take
-        names or groups, !getitem takes item names, and UT's /explain takes the generated world's
-        locations and regions.
+        names or groups, !getitem takes item names, UT's /explain takes the generated world's
+        locations and regions, and its /get_logical_path (the addons' /glp) also takes entrances.
+        The addons' /nearest_locations and /get_regions take region names.
         """
         multiworld = self.tracker_core.multiworld
         player = self.tracker_core.player_id
@@ -493,12 +494,17 @@ class BrowserTrackerContext(TrackerGameContext):
         def ordered(names):
             return sorted(names, key=str.casefold)
 
+        generated_locations = set(multiworld.regions.location_cache[player])
+        regions = set(multiworld.regions.region_cache[player])
+        entrances = set(multiworld.regions.entrance_cache[player])
         post({
             "type": "names",
             "items": ordered(items),
             "hint_items": ordered(items | set(world.item_name_groups)),
             "hint_locations": ordered(locations | set(world.location_name_groups)),
-            "explain": ordered(set(multiworld.regions.location_cache[player]) | set(multiworld.regions.region_cache[player])),
+            "explain": ordered(generated_locations | regions),
+            "logical_path": ordered(generated_locations | regions | entrances),
+            "regions": ordered(regions),
         })
 
     def load_coords(self, coords: dict, deferred_coords: dict, event_coords: dict, use_split: bool,

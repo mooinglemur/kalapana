@@ -822,7 +822,21 @@ $("map-select").addEventListener("change", (event) => worker?.postMessage(JSON.s
 // As in puna's moderation form: the game's own names, offered while a command that takes one is
 // typed. The bridge sends the lists (see post_names in ui_bridge.py).
 
-const NAME_COMMANDS = { "!hint": "hint_items", "!hint_location": "hint_locations", "!getitem": "items", "/explain": "explain" };
+const NAME_COMMANDS = {
+  "!hint": "hint_items",
+  "!hint_location": "hint_locations",
+  "!getitem": "items",
+  "/explain": "explain",
+  "/get_logical_path": "logical_path",
+};
+// Registered by Tracker Addons, so suggested only when the catalog loads them.
+const ADDON_NAME_COMMANDS = { "/glp": "logical_path", "/nearest_locations": "regions", "/get_regions": "regions" };
+
+function nameListFor(command) {
+  const lower = command.toLowerCase();
+  const list = NAME_COMMANDS[lower] ?? (catalog?.trackerAddons ? ADDON_NAME_COMMANDS[lower] : undefined);
+  return list && commandNames?.[list];
+}
 const SUGGESTIONS_MAX = 100;
 let commandNames = null;
 // navigated: a name was picked with the arrow keys, so Enter takes it instead of sending.
@@ -837,7 +851,7 @@ function hideSuggestions() {
 
 function updateSuggestions() {
   const typed = /^(\S+) (.*)$/s.exec($("command").value);
-  const names = typed && commandNames?.[NAME_COMMANDS[typed[1].toLowerCase()]];
+  const names = typed && nameListFor(typed[1]);
   if (!names) return hideSuggestions();
   const query = typed[2].trim().toLowerCase();
   // Names that start with what was typed come first, then names that contain it.
@@ -949,7 +963,9 @@ try {
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   catalog = await response.json();
   $("version").textContent +=
-    `, Archipelago ${catalog.archipelagoVersion}, Universal Tracker ${catalog.tracker.version}, Pyodide ${catalog.pyodide.version}`;
+    `, Archipelago ${catalog.archipelagoVersion}, Universal Tracker ${catalog.tracker.version}` +
+    (catalog.trackerAddons ? `, Tracker Addons ${catalog.trackerAddons.version}` : "") +
+    `, Pyodide ${catalog.pyodide.version}`;
   ui.phase = "ready";
   setStatus("idle", `Ready: ${Object.keys(catalog.games).length} games available for Archipelago ${catalog.archipelagoVersion}.`);
   $("connect").disabled = false;

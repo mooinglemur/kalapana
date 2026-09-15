@@ -93,7 +93,7 @@ flowchart LR
 
   The log keeps its most recent 2000 lines, on the page and in memory. When older lines are dropped, a reader scrolled back through the log keeps their place.
 
-  **Name suggestions.** After `!hint`, `!hint_location`, `!getitem` or `/explain` and a space, the command box lists matching names, prefix matches first, and Tab (or Enter after choosing with the arrow keys) completes one. The bridge sends each list once per generated multiworld, matching what the command itself accepts: item names and groups, location names and groups, item names, and the generated world's locations and regions.
+  **Name suggestions.** After `!hint`, `!hint_location`, `!getitem`, `/explain` or `/get_logical_path` and a space, the command box lists matching names, prefix matches first, and Tab (or Enter after choosing with the arrow keys) completes one. When the catalog loads Tracker Addons, so do its `/glp`, `/nearest_locations` and `/get_regions`. The bridge sends each list once per generated multiworld, matching what the command itself accepts: item names and groups, location names and groups, item names, the generated world's locations and regions, those plus its entrances for `/get_logical_path` and `/glp`, and its regions for `/nearest_locations` and `/get_regions`.
 
   **Datapackage cache.** CommonClient caches downloaded datapackages in a cache directory, which in the worker is memory that ends with the session. Instead, the page owns a cache in IndexedDB (`web/datapackage-cache.mjs`), keyed by game and checksum, with the least recently used evicted past 100 MB.
   - **Starting a session:** while the worker boots, the page loads the room's other games from the cache, and downloads the rest from the room with `GetDataPackage`, which needs no login. It hands them to `runtime/datapackage_cache.py`, which answers AP's load function, and saves the downloads.
@@ -208,7 +208,7 @@ Until then, the page accepts `?address=&slot=` in the query string. It never acc
   - **Libraries an apworld ships:** Super Junkoid carries `super_junkoid_randomizer` in its own folder and imports it by its top-level name, which desktop AP arranges by extracting it from the zipped `.apworld`. `runtime/bundled_libraries.py` answers such an import from a world's folder, but only when that world's `requirements.txt` names the package.
 - **Rooms without TLS** can't be reached from an https page.
 - **No saved library yet.** The test instance doesn't keep uploaded YAMLs and packs between visits. OPFS persistence was proven in the spikes but isn't wired in.
-- **Missing UI.** No hints tab, command autocomplete, map groups or location icons yet.
+- **Missing UI.** No hints tab, map groups or location icons yet.
 - **Uploaded apworlds aren't kept.** The choice lasts until the page is reloaded. A huge or malicious archive can exhaust the tab's memory, but nothing beyond the tab.
 - **Saved password.** The room password is kept in plain text in the browser's localStorage, along with the Recent list.
 - **Safari** is untested.
