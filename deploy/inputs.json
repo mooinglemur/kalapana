@@ -16,6 +16,11 @@
     "url": "https://github.com/FarisTheAncient/Archipelago/releases/download/Tracker_v0.3.3/tracker.apworld",
     "sha256": "a909f96404b0009865d39b87cec8bb749446783577d77bd4fa14431cef0c2140"
   },
+  "trackerAddons": {
+    "version": "0.1.1",
+    "url": "https://github.com/FarisTheAncient/Archipelago/releases/download/Tracker_Addons_v0.1.1/tracker_addons.apworld",
+    "sha256": "167b38de772e1097d261a45dabd14f6edbb1b61c7f617acee9c91156305a1f98"
+  },
   "wheels": [
     {
       "url": "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl",

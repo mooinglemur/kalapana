@@ -133,6 +133,8 @@ class TrackerListStandIn:
         pass
 
     def flush(self) -> None:
+        if ctx and ctx.quiet:
+            return
         post({"type": "tracker", "lines": [entry["text"] for entry in self._data]})
 
 
@@ -149,7 +151,11 @@ class LabelStandIn:
     def text(self, value: str) -> None:
         if value != self._text:
             self._text = value
-            post({"type": "label", "name": self.name, "text": value})
+            if not (ctx and ctx.quiet):
+                self.send()
+
+    def send(self) -> None:
+        post({"type": "label", "name": self.name, "text": self._text})
 
 
 class MarkerStandIn:
@@ -392,6 +398,9 @@ async def watch_connection(ctx: "BrowserTrackerContext") -> None:
 
 class BrowserTrackerContext(TrackerGameContext):
     _loss_message: str | None = None
+    # Set while an addon command runs. Some, like /next_progression, update the tracker once per item with
+    # that item pretend-collected, so the page only hears the state once the command is done.
+    quiet = False
 
     def run_gui(self) -> None:
         self.ui = BridgeUI(self)
@@ -399,6 +408,7 @@ class BrowserTrackerContext(TrackerGameContext):
         self.map_page = MapPageStandIn()
         self.markers: list[MarkerStandIn] = []
         self.map_page_coords_func = self.load_coords
+        self.labels: list[LabelStandIn] = []
         for name, text in (
             ("tracker_total_locs_label", "Locations: 0/0"),
             ("tracker_logic_locs_label", "In Logic: 0"),
@@ -406,7 +416,21 @@ class BrowserTrackerContext(TrackerGameContext):
             ("tracker_hinted_locs_label", "Hinted: 0"),
             ("tracker_go_mode_label", "Go Mode: No"),
         ):
-            setattr(self, name, LabelStandIn(name, text))
+            label = LabelStandIn(name, text)
+            self.labels.append(label)
+            setattr(self, name, label)
+
+    def run_addon_command(self, text: str) -> None:
+        self.quiet = True
+        try:
+            self.command_processor(self)(text)
+        finally:
+            self.quiet = False
+        core = self.tracker_core
+        if core.player_id and core.multiworld:
+            self.updateTracker()
+        for label in self.labels:
+            label.send()
 
     def gui_error(self, title: str, text) -> None:
         post({"type": "log", "level": "ERROR", "text": f"{title}: {text}"})
@@ -438,6 +462,8 @@ class BrowserTrackerContext(TrackerGameContext):
     def updateTracker(self):
         started = time.perf_counter()
         result = super().updateTracker()
+        if self.quiet:
+            return result
         logic_seconds = time.perf_counter() - started
         self.tracker_page.flush()
         self.flush_markers()
@@ -548,6 +574,18 @@ def start(pack_path: str | None = None) -> BrowserTrackerContext:
     return ctx
 
 
+def is_addon_command(text: str) -> bool:
+    """Whether text runs a command Universal Tracker Addons registered."""
+    if not text.startswith("/"):
+        return False
+    try:
+        from worlds.tracker_addons import UT_FUNCTIONS
+    except ImportError:
+        return False
+    # CommandProcessor matches command names case-insensitively.
+    return text[1:].split(" ", 1)[0].lower() in UT_FUNCTIONS
+
+
 def handle(message_json: str) -> None:
     message = json.loads(message_json)
     kind = message["type"]
@@ -557,7 +595,11 @@ def handle(message_json: str) -> None:
         post_connection("connecting", f"Connecting to {display_address(message['address'])}…")
         ctx.server_task = asyncio.create_task(server_loop(ctx, message["address"]), name="server loop")
     elif kind == "command":
-        ctx.command_processor(ctx)(message["text"])
+        text = message["text"]
+        if is_addon_command(text):
+            ctx.run_addon_command(text)
+        else:
+            ctx.command_processor(ctx)(text)
     elif kind == "load_map":
         ctx.load_map(message["map"])
         ctx.updateTracker()

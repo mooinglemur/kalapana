@@ -60,7 +60,7 @@ flowchart LR
   Text assets are compressed with brotli or gzip on first request and cached in memory. Zips are served as-is.
 - **Refresh pipeline** (`server/refresh.mjs`). Any pod can request a refresh; it leaves a request file in the data directory. The pod holding the lease processes requests until none remain:
   1. **Core bundle:** build it if the current key has none. The key covers the pinned inputs and kalapana's runtime and analyzer code.
-  2. **Tracker:** analyze the pinned `tracker.apworld`.
+  2. **Tracker:** analyze the pinned `tracker.apworld`, then build the pinned `tracker_addons.apworld` against it. The addons are optional: if they fail, the failure is recorded and the catalog has no `trackerAddons`.
   3. **Index:** download the tarball and parse it in the sandbox with `tomllib`. Refuse to continue if its `archipelago_version` differs from the image's.
   4. **Resolve versions** with the lobby's rules: skip disabled worlds, take supported worlds from the AP source, and map each version to a `local` file, its own `url`, or `default_url` with `{{version}}` substituted.
   5. **Download** anything missing, verifying the sha256 from `index.lock` when present. Store files as `apworlds/<sha256>.apworld`.
@@ -69,6 +69,7 @@ flowchart LR
 - **Analyzer** (`server/sandbox.mjs`, `analyzer/`). Each task is a child `node --permission` process running Pyodide:
   - **`build_core`** builds `core.zip` (precompiled) and `core-src.zip` (sources, for the analyzer), then smoke-tests importing `worlds`, `CommonClient` and `Generate`.
   - **`analyze_world`** imports one world alone. It records every registered game's datapackage checksum, whether UT needs a YAML (`ut_can_gen_without_yaml`), whether UT is disabled, whether the map needs an external poptracker pack, and which Pyodide packages the world imported. It then writes a reproducible precompiled bundle.
+  - **`analyze_addon`** builds Universal Tracker Addons, which registers extra tracker commands (`/next_progression`, `/get_depth`, `/nearest_locations`, `/glp`, `/get_regions`) rather than World classes. It unpacks the tracker's bundle first, since the addons import `worlds.tracker`, imports `worlds.tracker_addons` directly, and writes a precompiled bundle. Its cache key covers the addons file, the tracker build and this task. World analyses never load the addons, so neither the addons input nor this task is part of their key, and pinning a new addons release rebuilds only the addons.
 - **Caching.** Completed analyses, including failures, are cached under a key that combines the apworld sha256 with a hash of the analyzer's context: the pinned inputs, the analyzer tasks and the stubs it imports. Crashes and timeouts aren't cached, so they are retried. Changing the analyzer therefore retries earlier failures, and bundle URLs change with it. Changing browser-only modules (the bridge and the WebSocket shim) rebuilds only the core bundle.
 
 ### Browser
@@ -100,10 +101,11 @@ flowchart LR
   - **Checked by** `spikes/07-kalapana/datapackage-cache.mjs`: the first download, the reuse after a reload, and a tampered entry. `spikes/07-kalapana/switch.mjs` checks this.
 - **Worker** (`web/worker.mjs`):
   1. Load Pyodide from kalapana and the packages the entries list.
-  2. Unpack the core, tracker and world bundles at `/`, and place the uploaded files.
+  2. Unpack the core, tracker, tracker addons (when the catalog has them) and world bundles at `/`, and place the uploaded files.
   3. Run `kalapana_boot.prepare()` and install the WebSocket shim.
   4. Start the bridge and connect UT.
 - **Bridge** (`runtime/ui_bridge.py`). It stands in for the Kivy widgets UT touches: tracker list, header labels, map markers and images, and the `ui` object. It sends their updates to the page:
+  - nothing while an addon command runs. `/next_progression` updates the tracker once per progression item with that item pretend-collected, so the bridge holds back tracker lines, labels, markers and timings until the command finishes, then sends one real update;
   - server text as Kivy-style `[color=name]` markup, not ANSI escapes. The page maps each name to a CSS token with light and dark values;
   - nested message lists from `/explain` flattened;
   - the startup generation skipped when no YAML was supplied, since UT regenerates YAML-less worlds on connect;
@@ -139,6 +141,7 @@ analysis-v1/<key>/            bundle.zip, result.json (key = hash of analyzer co
   "pyodide": { "version": "0.29.4", "base": "/runtime/pyodide-0.29.4/" },
   "core": { "bundle": "/bundles/core/<key>.zip", "packages": ["pyyaml"] },
   "tracker": { "version": "0.3.3", "bundle": "/bundles/worlds/<key>.zip", "packages": ["pyyaml"] },
+  "trackerAddons": { "version": "0.1.1", "bundle": "/bundles/worlds/<key>.zip", "packages": [] },
   "games": {
     "TUNIC": [
       { "module": "tunic", "version": "0.6.7", "source": "core", "checksum": "c2cfbd...",
@@ -149,7 +152,7 @@ analysis-v1/<key>/            bundle.zip, result.json (key = hash of analyzer co
 }
 ```
 
-**Publishing in two steps.** A new image serves its page as soon as its pod starts, but a refresh can take many minutes. So once the new core and tracker bundles are ready, the refresh first republishes the existing catalog pointing at them, keeping its games, and publishes the full catalog at the end. The early step is skipped when the pinned Archipelago or Pyodide version changed, since world bundles are compiled for those.
+**Publishing in two steps.** A new image serves its page as soon as its pod starts, but a refresh can take many minutes. So once the new core, tracker and tracker addons bundles are ready, the refresh first republishes the existing catalog pointing at them, keeping its games, and publishes the full catalog at the end. The early step is skipped when the pinned Archipelago or Pyodide version changed, since world bundles are compiled for those.
 
 **Checksum ambiguity.** Entries are sorted newest first. A datapackage checksum only covers item and location names and ids, so versions that changed logic without renaming anything share a checksum (ANIMAL WELL 0.5.0 and 0.5.2 do). The browser takes the newest match. That may not be the version the room generated with; the room's apworld version isn't available anywhere the browser can see.
 

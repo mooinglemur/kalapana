@@ -6,7 +6,8 @@ import { requestRefresh, startRefreshWatcher } from "./refresh.mjs";
 
 log(
   `kalapana starting on pod ${config.podName}: Archipelago ${config.inputs.archipelago.version},`,
-  `Pyodide ${config.inputs.pyodide.version}, tracker ${config.inputs.tracker.version}, data ${config.dataDir}`,
+  `Pyodide ${config.inputs.pyodide.version}, tracker ${config.inputs.tracker.version},`,
+  `tracker addons ${config.inputs.trackerAddons?.version ?? "none"}, data ${config.dataDir}`,
 );
 if (!config.adminToken) log("no admin token configured; /admin endpoints are disabled");
 

@@ -78,6 +78,11 @@ for (const name of [...wanted].sort()) {
 console.log(`tracker ${inputs.tracker.version}`);
 await writeFile(join(dest, "tracker.apworld"), await download(inputs.tracker.url, inputs.tracker.sha256));
 
+if (inputs.trackerAddons) {
+  console.log(`tracker addons ${inputs.trackerAddons.version}`);
+  await writeFile(join(dest, "tracker_addons.apworld"), await download(inputs.trackerAddons.url, inputs.trackerAddons.sha256));
+}
+
 const wheelDir = join(dest, "wheels");
 await rm(wheelDir, { recursive: true, force: true });
 await mkdir(wheelDir, { recursive: true });

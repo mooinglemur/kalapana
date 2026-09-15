@@ -7,13 +7,15 @@ function inputs(archipelago = "0.6.7", pyodide = "0.29.4") {
     archipelago: { version: archipelago },
     pyodide: { version: pyodide, packages: ["pyyaml"] },
     tracker: { version: "0.3.3" },
+    trackerAddons: { version: "0.1.1" },
   };
 }
 
-function runtime(coreKey, trackerKey) {
+function runtime(coreKey, trackerKey, addonsKey = null) {
   return {
     core: { key: coreKey, result: { packages: ["pyyaml"] } },
     tracker: { analysisKey: trackerKey, analysis: { packages: [] } },
+    trackerAddons: addonsKey && { analysisKey: addonsKey, analysis: { packages: [] } },
   };
 }
 
@@ -38,6 +40,13 @@ test("a new core and tracker keep the previous catalog's games", () => {
   assert.equal(updated.tracker.bundle, "/bundles/worlds/new-tracker.zip");
   assert.deepEqual(updated.games, previous.games);
   assert.equal(updated.generatedAt, previous.generatedAt);
+});
+
+test("tracker addons are listed when built, and dropped when a later runtime has none", () => {
+  const withAddons = buildCatalog({ inputs: inputs(), ...runtime("core", "tracker", "addons"), items });
+  assert.deepEqual(withAddons.trackerAddons, { version: "0.1.1", bundle: "/bundles/worlds/addons.zip", packages: [] });
+  const without = catalogWithRuntime(withAddons, { inputs: inputs(), ...runtime("core", "tracker") });
+  assert.equal(without.trackerAddons, null);
 });
 
 test("no mix when world bundles were built for other pinned versions", () => {

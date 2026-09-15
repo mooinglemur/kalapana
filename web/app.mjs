@@ -345,7 +345,7 @@ function onSubmit(event) {
   else onConnect();
 }
 
-const runtimeInfo = () => ({ pyodide: catalog.pyodide, core: catalog.core, tracker: catalog.tracker });
+const runtimeInfo = () => ({ pyodide: catalog.pyodide, core: catalog.core, tracker: catalog.tracker, trackerAddons: catalog.trackerAddons });
 
 function discardWorker() {
   worker?.terminate();

@@ -9,7 +9,7 @@ only serves files and keeps a catalog of apworld bundles built from the curated
 - **Refresh.** At startup and on `POST /admin/refresh`, the server:
   1. downloads the index;
   2. downloads every locked apworld version, checked against `index.lock`;
-  3. analyzes each new one in a sandbox (see below);
+  3. analyzes each new one in a sandbox (see below), along with the pinned Universal Tracker and its optional Tracker Addons, which add commands such as `/next_progression`;
   4. publishes `catalog.json`.
 
   Results are cached by apworld sha256, so later refreshes only process new versions.
@@ -66,4 +66,4 @@ Requires Node 26: the analyzer sandbox relies on the permission model's `--allow
 
 ## Updating pinned versions
 
-`deploy/inputs.json` pins the Archipelago release (it must match the index's `archipelago_version`), Pyodide, Universal Tracker, the pure-Python wheels, and pure-Python packages only published as source (a `sources` entry names the tarball and the package directory inside it), all by sha256. A refresh fails loudly if the index moves to a different Archipelago version than the image has.
+`deploy/inputs.json` pins the Archipelago release (it must match the index's `archipelago_version`), Pyodide, Universal Tracker, Tracker Addons (optional; a new release rebuilds only the addons bundle), the pure-Python wheels, and pure-Python packages only published as source (a `sources` entry names the tarball and the package directory inside it), all by sha256. A refresh fails loudly if the index moves to a different Archipelago version than the image has.

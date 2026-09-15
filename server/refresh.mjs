@@ -134,7 +134,31 @@ async function refreshOnce(lease) {
     if (!tracker.analysis.ok) throw new Error(`tracker.apworld failed analysis: ${tracker.analysis.error}`);
 
     log(`tracker ${tracker.version} ready`);
-    await publishRuntime(lease, core, tracker);
+
+    // Optional: without the addons the tracker still works, just without their commands.
+    let trackerAddons = null;
+    if (config.inputs.trackerAddons) {
+      status.phase = "tracker addons";
+      const addonsFile = join(config.vendorDir, "tracker_addons.apworld");
+      const addonTask = await readFile(join(config.analyzerDir, "tasks", ADDON_TASK_FILE));
+      const addons = withAnalysisKey({
+        kind: "addon",
+        module: "tracker_addons",
+        version: config.inputs.trackerAddons.version,
+        // The addons load against this tracker build and are analyzed by their own task, so both are part of the key.
+        key: sha256(`${sha256(await readFile(addonsFile))}:${tracker.analysisKey}:${sha256(addonTask)}`),
+        file: addonsFile,
+        trackerAnalysisKey: tracker.analysisKey,
+      });
+      addons.analysis = await ensureAnalysis(addons, core, work);
+      if (addons.analysis.ok) {
+        trackerAddons = addons;
+        log(`tracker addons ${addons.version} ready`);
+      } else {
+        recordFailure(addons, addons.analysis.error);
+      }
+    }
+    await publishRuntime(lease, core, tracker, trackerAddons);
 
     status.phase = "index";
     const indexStarted = Date.now();
@@ -208,7 +232,7 @@ async function refreshOnce(lease) {
     log(`analysis done: ${describeAnalysis()} (${secondsSince(analyzeStarted)}s)`);
 
     status.phase = "publish";
-    const catalog = buildCatalog({ inputs: config.inputs, core, tracker, items });
+    const catalog = buildCatalog({ inputs: config.inputs, core, tracker, trackerAddons, items });
     await writeFileAtomic(paths.catalog(), JSON.stringify(catalog));
     const summary = {
       publishedAt: catalog.generatedAt,
@@ -233,14 +257,20 @@ async function refreshOnce(lease) {
   }
 }
 
-// Points the existing catalog at the new core and tracker bundles as soon as they exist. A new image
-// serves its page immediately, and without this that page would run against the previous image's
+// Points the existing catalog at the new core, tracker and addons bundles as soon as they exist. A new
+// image serves its page immediately, and without this that page would run against the previous image's
 // runtime until the whole index had been processed.
-async function publishRuntime(lease, core, tracker) {
+async function publishRuntime(lease, core, tracker, trackerAddons) {
   const previous = await readJson(paths.catalog(), null);
-  const updated = previous && catalogWithRuntime(previous, { inputs: config.inputs, core, tracker });
+  const updated = previous && catalogWithRuntime(previous, { inputs: config.inputs, core, tracker, trackerAddons });
   if (!updated || lease.lost) return;
-  if (updated.core.bundle === previous.core?.bundle && updated.tracker.bundle === previous.tracker?.bundle) return;
+  if (
+    updated.core.bundle === previous.core?.bundle &&
+    updated.tracker.bundle === previous.tracker?.bundle &&
+    updated.trackerAddons?.bundle === previous.trackerAddons?.bundle
+  ) {
+    return;
+  }
   await writeFileAtomic(paths.catalog(), JSON.stringify(updated));
   log("catalog now uses the new core and tracker bundles; games follow when this refresh finishes");
 }
@@ -320,6 +350,7 @@ async function ensureDownloaded(item, unlocked) {
 // Runtime modules only the browser imports. Editing them rebuilds the core bundle but doesn't
 // invalidate apworld analyses.
 const BROWSER_ONLY_RUNTIME = new Set(["ui_bridge.py", "browser_websocket.py", "datapackage_cache.py"]);
+const ADDON_TASK_FILE = "analyze_addon.py";
 
 async function hashSources(hash, dir, include = () => true) {
   for (const name of (await readdir(dir)).sort()) {
@@ -336,10 +367,13 @@ async function coreKey() {
 }
 
 // Analyses depend on everything the analyzer runs, so fixing the analyzer retries earlier failures.
+// World analyses never load the tracker addons, so the addons input and task stay out of this hash:
+// pinning a new addons release rebuilds only the addons bundle, not every world. The addons key covers them.
 async function analysisContext() {
-  const hash = createHash("sha256").update(`analysis-v${ANALYZER_VERSION}\n`).update(JSON.stringify(config.inputs));
+  const { trackerAddons, ...worldInputs } = config.inputs;
+  const hash = createHash("sha256").update(`analysis-v${ANALYZER_VERSION}\n`).update(JSON.stringify(worldInputs));
   await hashSources(hash, config.runtimeDir, (name) => !BROWSER_ONLY_RUNTIME.has(name));
-  await hashSources(hash, join(config.analyzerDir, "tasks"));
+  await hashSources(hash, join(config.analyzerDir, "tasks"), (name) => name !== ADDON_TASK_FILE);
   return hash.digest("hex");
 }
 
@@ -386,8 +420,9 @@ async function ensureAnalysis(item, core, work) {
   const mounts = { "/core": paths.coreDir(core.key) };
   if (item.kind === "core") mounts["/apsrc"] = join(config.vendorDir, "archipelago");
   else await copyFile(item.file, join(jobDir, "input.apworld"));
+  if (item.kind === "addon") mounts["/tracker"] = paths.analysisDir(item.trackerAnalysisKey);
 
-  const result = await runTask("analyze_world", {
+  const result = await runTask(item.kind === "addon" ? "analyze_addon" : "analyze_world", {
     jobDir,
     input: { packages: ANALYZER_PACKAGES, kind: item.kind, module: item.module },
     mounts,

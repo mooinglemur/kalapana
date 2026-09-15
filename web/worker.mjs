@@ -43,19 +43,24 @@ kalapana_boot.prepare()
 `);
 }
 
+// The core, the tracker and, when the catalog has them, the tracker addons, in unpacking order.
+const runtimeParts = (runtime) => [runtime.core, runtime.tracker, runtime.trackerAddons].filter(Boolean);
+
 async function boot({ runtime, entry }) {
+  const parts = runtimeParts(runtime);
   await loadRuntime(
     runtime,
-    [...runtime.core.packages, ...runtime.tracker.packages, ...entry.packages],
-    [runtime.core.bundle, runtime.tracker.bundle, entry.bundle],
+    [...parts.flatMap((part) => part.packages), ...entry.packages],
+    [...parts.map((part) => part.bundle), entry.bundle],
   );
 }
 
 async function inspect({ runtime, apworld }) {
+  const parts = runtimeParts(runtime);
   await loadRuntime(
     runtime,
-    [...runtime.core.packages, ...runtime.tracker.packages, ...(runtime.pyodide.packages ?? [])],
-    [runtime.core.bundle, runtime.tracker.bundle],
+    [...parts.flatMap((part) => part.packages), ...(runtime.pyodide.packages ?? [])],
+    parts.map((part) => part.bundle),
   );
   const result = await time("apworld", async () => {
     py.FS.writeFile("/tmp/upload.apworld", apworld.bytes);
