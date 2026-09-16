@@ -232,7 +232,7 @@ async function refreshOnce(lease) {
     log(`analysis done: ${describeAnalysis()} (${secondsSince(analyzeStarted)}s)`);
 
     status.phase = "publish";
-    const catalog = buildCatalog({ inputs: config.inputs, core, tracker, trackerAddons, items });
+    const catalog = buildCatalog({ inputs: config.inputs, core, tracker, trackerAddons, version: config.version, items });
     await writeFileAtomic(paths.catalog(), JSON.stringify(catalog));
     const summary = {
       publishedAt: catalog.generatedAt,
@@ -262,12 +262,16 @@ async function refreshOnce(lease) {
 // runtime until the whole index had been processed.
 async function publishRuntime(lease, core, tracker, trackerAddons) {
   const previous = await readJson(paths.catalog(), null);
-  const updated = previous && catalogWithRuntime(previous, { inputs: config.inputs, core, tracker, trackerAddons });
+  const updated = previous && catalogWithRuntime(previous, {
+    inputs: config.inputs, core, tracker, trackerAddons, version: config.version,
+  });
   if (!updated || lease.lost) return;
+  // The version too: a new image with unchanged bundles still has a new footer to publish.
   if (
     updated.core.bundle === previous.core?.bundle &&
     updated.tracker.bundle === previous.tracker?.bundle &&
-    updated.trackerAddons?.bundle === previous.trackerAddons?.bundle
+    updated.trackerAddons?.bundle === previous.trackerAddons?.bundle &&
+    updated.kalapanaVersion === previous.kalapanaVersion
   ) {
     return;
   }

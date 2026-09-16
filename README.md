@@ -67,3 +67,9 @@ Requires Node 26: the analyzer sandbox relies on the permission model's `--allow
 ## Updating pinned versions
 
 `deploy/inputs.json` pins the Archipelago release (it must match the index's `archipelago_version`), Pyodide, Universal Tracker, Tracker Addons (optional; a new release rebuilds only the addons bundle), the pure-Python wheels, and pure-Python packages only published as source (a `sources` entry names the tarball and the package directory inside it), all by sha256. A refresh fails loudly if the index moves to a different Archipelago version than the image has.
+
+Kalapana's own version is `VERSION` in `server/version.mjs`. The image build stamps in the commit it was built from (the `KALAPANA_COMMIT` build argument, which `.gitlab-ci.yml` fills from the pipeline), so the page footer reads `0.1.0-abc1234`; a local run shows the number alone.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

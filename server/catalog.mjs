@@ -3,8 +3,9 @@ import { compareVersions } from "./semver.mjs";
 
 // The runtime half of a catalog: the pinned versions and the core, tracker and tracker addons bundles.
 // trackerAddons is null when none are pinned or they failed analysis.
-function runtimeFields({ inputs, core, tracker, trackerAddons = null }) {
+function runtimeFields({ inputs, core, tracker, trackerAddons = null, version = null }) {
   return {
+    kalapanaVersion: version,
     archipelagoVersion: inputs.archipelago.version,
     pyodide: {
       version: inputs.pyodide.version,
@@ -26,7 +27,7 @@ function runtimeFields({ inputs, core, tracker, trackerAddons = null }) {
   };
 }
 
-export function buildCatalog({ inputs, core, tracker, trackerAddons, items }) {
+export function buildCatalog({ inputs, core, tracker, trackerAddons, version, items }) {
   const games = {};
   for (const item of items) {
     const analysis = item.analysis;
@@ -55,15 +56,15 @@ export function buildCatalog({ inputs, core, tracker, trackerAddons, items }) {
   return {
     schema: 1,
     generatedAt: new Date().toISOString(),
-    ...runtimeFields({ inputs, core, tracker, trackerAddons }),
+    ...runtimeFields({ inputs, core, tracker, trackerAddons, version }),
     games,
   };
 }
 
 // The previous catalog's games with a new core and tracker, or null when that mix isn't safe: world
 // bundles are compiled for the pinned Archipelago and Pyodide versions, so those must be unchanged.
-export function catalogWithRuntime(previous, { inputs, core, tracker, trackerAddons }) {
-  const runtime = runtimeFields({ inputs, core, tracker, trackerAddons });
+export function catalogWithRuntime(previous, { inputs, core, tracker, trackerAddons, version }) {
+  const runtime = runtimeFields({ inputs, core, tracker, trackerAddons, version });
   if (
     previous?.schema !== 1 ||
     previous.archipelagoVersion !== runtime.archipelagoVersion ||

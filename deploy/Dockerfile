@@ -13,6 +13,9 @@ COPY server /app/server
 COPY analyzer /app/analyzer
 COPY runtime /app/runtime
 COPY web /app/web
+# The commit this image was built from, shown in the page footer after the version number.
+ARG KALAPANA_COMMIT=""
+ENV KALAPANA_COMMIT=$KALAPANA_COMMIT
 ENV KALAPANA_DATA_DIR=/data \
     KALAPANA_PORT=8080
 USER node

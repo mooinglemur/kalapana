@@ -179,9 +179,17 @@ footer {
   margin: 0 auto;
   box-sizing: border-box;
   padding: 0 1rem 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
 }
 
 .version { color: var(--muted); font-size: 0.85rem; }
+/* The names link to their sources; the underline stays quiet until hover, as the footer is an aside. */
+.version a { color: inherit; text-decoration: underline; text-decoration-color: var(--border); }
+.version a:hover, .version a:focus-visible { color: var(--link); text-decoration-color: currentColor; }
+.license { margin-left: auto; }
 
 /* Flex items don't collapse margins, so one gap from the container spaces everything. */
 main > * {

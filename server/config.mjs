@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { log } from "./log.mjs";
 import { integerSetting, portSetting } from "./settings.mjs";
+import { versionString } from "./version.mjs";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const env = process.env;
@@ -42,5 +43,7 @@ export const config = {
   downloadConcurrency: integerSetting(env, "KALAPANA_DOWNLOAD_CONCURRENCY", 8, { min: 1 }),
   refreshOnStartup: env.KALAPANA_REFRESH_ON_STARTUP !== "false",
   podName: env.HOSTNAME ?? "local",
+  // Shown in the page footer. The commit comes from the image build; a local run shows the number alone.
+  version: versionString(env.KALAPANA_COMMIT),
   inputs: JSON.parse(readFileSync(join(vendorDir, "inputs.json"), "utf8")),
 };

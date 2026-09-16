@@ -53,7 +53,7 @@ kalapana-image:
     - echo "$CI_REGISTRY_PASSWORD" | buildah login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
   script:
     - IMAGE="$CI_REGISTRY_IMAGE/kalapana"
-    - buildah build -f deploy/Dockerfile -t "$IMAGE:sha-$CI_COMMIT_SHORT_SHA" .
+    - buildah build -f deploy/Dockerfile --build-arg KALAPANA_COMMIT="$CI_COMMIT_SHORT_SHA" -t "$IMAGE:sha-$CI_COMMIT_SHORT_SHA" .
     - buildah push "$IMAGE:sha-$CI_COMMIT_SHORT_SHA"
     - |
       case "$CI_COMMIT_BRANCH" in

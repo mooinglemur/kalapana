@@ -807,6 +807,42 @@ for (const id of ["address", "slot", "password"]) {
 }
 $("start").addEventListener("click", () => startTracking().catch((err) => setStatus("down", err.message, { error: true })));
 $("map-select").addEventListener("change", (event) => worker?.postMessage(JSON.stringify({ type: "load_map", map: event.target.value })));
+// --- the footer ---------------------------------------------------------------------------------
+// Each component's name links to its source. Links open in a new tab: following one while tracking
+// would terminate the worker and lose the session.
+
+const SOURCES = {
+  kalapana: "https://github.com/mooinglemur/kalapana",
+  archipelago: "https://github.com/ArchipelagoMW/Archipelago",
+  tracker: "https://github.com/FarisTheAncient/Archipelago",
+  pyodide: "https://github.com/pyodide/pyodide",
+};
+
+function source(href, text) {
+  const link = document.createElement("a");
+  link.href = href;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.textContent = text;
+  return link;
+}
+
+function showVersions() {
+  const parts = [
+    source(SOURCES.kalapana, "kalapana"),
+    catalog.kalapanaVersion ? ` ${catalog.kalapanaVersion}` : null,
+    " · ",
+    source(SOURCES.archipelago, "Archipelago"),
+    ` ${catalog.archipelagoVersion} · `,
+    source(SOURCES.tracker, "Universal Tracker"),
+    ` ${catalog.tracker.version} · `,
+    ...(catalog.trackerAddons ? [source(SOURCES.tracker, "Tracker Addons"), ` ${catalog.trackerAddons.version} · `] : []),
+    source(SOURCES.pyodide, "Pyodide"),
+    ` ${catalog.pyodide.version}`,
+  ];
+  $("version").replaceChildren(...parts.filter(Boolean));
+}
+
 // --- name suggestions ---------------------------------------------------------------------------
 // As in puna's moderation form: the game's own names, offered while a command that takes one is
 // typed. The bridge sends the lists (see post_names in ui_bridge.py).
@@ -953,10 +989,7 @@ try {
   const response = await fetch("/catalog.json", { cache: "no-cache" });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   catalog = await response.json();
-  $("version").textContent +=
-    `, Archipelago ${catalog.archipelagoVersion}, Universal Tracker ${catalog.tracker.version}` +
-    (catalog.trackerAddons ? `, Tracker Addons ${catalog.trackerAddons.version}` : "") +
-    `, Pyodide ${catalog.pyodide.version}`;
+  showVersions();
   ui.phase = "ready";
   setStatus("idle", `Ready: ${Object.keys(catalog.games).length} games available for Archipelago ${catalog.archipelagoVersion}.`);
   $("connect").disabled = false;
