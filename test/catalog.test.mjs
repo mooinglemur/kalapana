@@ -36,10 +36,10 @@ const items = [
 test("a new core and tracker keep the previous catalog's games", () => {
   const previous = buildCatalog({ inputs: inputs(), ...runtime("old-core", "old-tracker"), version: "0.1.0", items });
   const updated = catalogWithRuntime(previous, {
-    inputs: inputs(), ...runtime("new-core", "new-tracker"), version: "0.1.0-abc1234",
+    inputs: inputs(), ...runtime("new-core", "new-tracker"), version: "0.1.0+abc1234",
   });
   assert.equal(previous.kalapanaVersion, "0.1.0");
-  assert.equal(updated.kalapanaVersion, "0.1.0-abc1234");
+  assert.equal(updated.kalapanaVersion, "0.1.0+abc1234");
   assert.equal(updated.core.bundle, "/bundles/core/new-core.zip");
   assert.equal(updated.tracker.bundle, "/bundles/worlds/new-tracker.zip");
   assert.deepEqual(updated.games, previous.games);

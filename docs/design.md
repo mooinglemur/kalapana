@@ -142,7 +142,7 @@ analysis-v1/<key>/            bundle.zip, result.json (key = hash of analyzer co
   "core": { "bundle": "/bundles/core/<key>.zip", "packages": ["pyyaml"] },
   "tracker": { "version": "0.3.3", "bundle": "/bundles/worlds/<key>.zip", "packages": ["pyyaml"] },
   "trackerAddons": { "version": "0.1.1", "bundle": "/bundles/worlds/<key>.zip", "packages": [] },
-  "kalapanaVersion": "0.1.0-abc1234",
+  "kalapanaVersion": "0.1.0+abc1234",
   "games": {
     "TUNIC": [
       { "module": "tunic", "version": "0.6.7", "source": "core", "checksum": "c2cfbd...",
